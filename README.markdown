@@ -9,21 +9,30 @@
 
 __Install__ a given project  
 	epm install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force]
+	epm install JacobVorreuter/excavator
+	epm install JacobVorreuter/excavator --tag 0.3
+	epm install JacobVorreuter/excavator --branch scheduler
+	epm install JacobVorreuter/excavator --sha d3dc9a345000b73401b214da55f6e6af3629d39a
 
 __Test__ a given project  
 	epm test [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
+	epm test ngerakines/etap
 
 __List dependencies__ of a project  
 	epm list_deps [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
+	epm list_deps ngerakines/etap
 
 __Info__ regarding project details  
 	epm info [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
+	epm info ngerakines/etap
 
 __Remove__ a given project  
 	epm remove <project>
+	epm remove etap
 
 __Release__ package created for a project and its dependencies according to the OTP release spec  
 	epm release [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
+	epm release ngerakines/etap
 
 ### Global epm config
 
