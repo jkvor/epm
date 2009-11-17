@@ -8,22 +8,22 @@
 ### USAGE
 
 __Install__ a given project  
-	epm install [user/]project [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force]
+	epm install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force]
 
 __Test__ a given project  
-	epm test [user-]project [--sha <sha>]
+	epm test [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
 
 __List dependencies__ of a project  
-	epm list_deps [user-]project [--sha <sha>]
+	epm list_deps [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
 
 __Info__ regarding project details  
-	epm info [user-]project [--sha <sha>]
+	epm info [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
 
 __Remove__ a given project  
 	epm remove <project>
 
 __Release__ package created for a project and its dependencies according to the OTP release spec  
-	epm release [user-]project [--sha <sha>]
+	epm release [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]
 
 ### Global epm config
 
