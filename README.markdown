@@ -47,7 +47,7 @@ __Release__ package created for a project and its dependencies according to the 
 		{build_path, "/tmp"},
 		{install_path, "/usr/local/lib"},
 		{exclude, [mochiweb]}
-	]
+	].
 
 ### Application epm config
 
@@ -66,7 +66,7 @@ myapp/myapp.epm
 			{log_roller, "da5a7738c913383cbd06ca3a0139e6eaab03030f"},
 			{etap, "master"}
 		]
-	]
+	].
 
 ### epm Application Specification
 * conforms to the OTP application spec
