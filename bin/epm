@@ -1,0 +1,67 @@
+#!/usr/bin/env escript
+
+main(["install" | Args]) ->
+    CollectedArgs = collect_args(Args),
+    io:format("install ~p~n", [CollectedArgs]),
+    Packages = lists:filter(fun ({_, _}) -> false; (_) -> true end, CollectedArgs),
+    lists:foreach(
+        fun(Package) ->
+            {Name, User} = split_package(Package),
+            io:format("Installing ~p~n", [{Name, User}]),
+            case package_info(Package) of
+                {error,not_found} -> continue;
+                _ -> stop
+            end,
+            ok
+        end,
+        Packages
+    ),
+    ok;
+main(["info" | Args]) ->
+    io:format("info ~p~n", [collect_args(Args)]),
+    ok;
+main(["remove" | Args]) ->
+    io:format("remove ~p~n", [collect_args(Args)]),
+    ok;
+main(_) ->
+    io:format("epm v0.0.1, 2009 Nick Gerakines, Jacob Vorreuter~n"),
+    io:format("Usage: epm command arguments~n"),
+    io:format("    install    Install one or more packages.~n"),
+    io:format("    remove     Remove one or more packages.~n"),
+    io:format("    info       Display package info.~n"),
+    ok.
+
+collect_args(Args) ->
+    collect_args(Args, []).
+
+collect_args([], Acc) -> lists:reverse(Acc);
+collect_args([Arg | Args], Acc) ->
+    NewAcc = case Acc of
+        [{Name} | T] -> [{Name, Arg} | T];
+        _ ->
+            case Arg of
+                "--" ++ Name -> [{Name} | Acc];
+                "-" ++ Name -> [{Name} | Acc];
+                _ -> [Arg | Acc]
+            end
+    end,
+    collect_args(Args, NewAcc).
+
+split_package(Raw) -> split_package(Raw, []).
+split_package([], Package) -> {Package, none};
+split_package([45 | Package], User) -> {Package, User};
+split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
+
+package_info(Package) when is_list(Package) ->
+    package_info(list_to_atom(Package));
+package_info(Package) ->
+    case code:lib_dir(Package) of
+        {error, bad_name} -> {error, not_found};
+        Path ->
+            case file:consult(Path ++ "/ebin/" ++ atom_to_list(Package) ++ ".app") of
+                {ok, [application, Package, AppContents]} ->
+                    
+                    ok;
+                _ -> {error, no_app_file}
+            end
+    end.
