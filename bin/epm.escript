@@ -10,8 +10,11 @@ main(Args) ->
 			_ -> []
 		end,
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
-		{ok, Terms, _} ->
-			execute(Terms, Args);
+		{ok, [GlobalConfig], _} ->
+			case validate_global_config(GlobalConfig) of
+				true -> execute(GlobalConfig, Args);
+				false -> ok
+			end;
 		{error, enoent} ->
 			io:format("- failed to read epm global config: file does not exist~n");
 		{error, Reason} ->
@@ -21,27 +24,27 @@ main(Args) ->
 %% -----------------------------------------------------------------------------
 %% execute function
 %% -----------------------------------------------------------------------------
-execute(Terms, ["install" | Args]) ->
+execute(GlobalConfig, ["install" | Args]) ->
     CollectedArgs = collect_args(install, Args),
 	[begin
 		{Name, User} = split_package(Package),
 		case package_info(Name) of
             {error, not_found} ->
-				install_package(Name, User, Props);
+				install_package(GlobalConfig, Name, User, Props);
 			{error, Reason} ->
 				io:format("- there was a problem with the installed version of ~s: ~p~n", [Name, Reason]),
-				install_package(Name, User, Props);
+				install_package(GlobalConfig, Name, User, Props);
             {ok, Version} ->
 				io:format("+ skipping ~s: already installed~n", [Name])
         end
 	end || {Package, Props} <- CollectedArgs],
     ok;
 
-execute(Terms, ["info" | Args]) ->
+execute(GlobalConfig, ["info" | Args]) ->
     io:format("info ~p~n", [collect_args(info, Args)]),
     ok;
 
-execute(Terms, ["remove" | Args]) ->
+execute(GlobalConfig, ["remove" | Args]) ->
     io:format("remove ~p~n", [collect_args(remove, Args)]),
     ok;
 
@@ -103,7 +106,25 @@ parse_tag(install, "--sha") -> {sha, true};
 parse_tag(install, "--force") -> {force, false};
 parse_tag(_, _) -> undefined.
 
-install_package(Name, User, Props) ->
-	io:format("+ installing ~s...~n", [Name]),
+validate_global_config(GlobalConfig) ->
+	validate_global_config(GlobalConfig, [git_paths, build_path, install_path]).
 	
+validate_global_config(_, []) -> true;
+validate_global_config(GlobalConfig, [Value|Rest]) ->
+	case proplists:get_value(Value, GlobalConfig) of
+		undefined -> 
+			io:format("- missing value in global epm config: ~p~n", [Value]), 
+			false;
+		_ -> 
+			validate_global_config(GlobalConfig, Rest)
+	end.
+
+install_package(GlobalConfig, Name, User, Props) ->
+	io:format("+ installing ~s...~n", [Name]),
+	checkout_package(GlobalConfig, Name, User, Props),
 	ok.
+	
+checkout_package(GlobalConfig, Name, User, Props) ->
+	_Paths = proplists:get_value(git_paths, GlobalConfig),
+	ok.
+	
