@@ -18,13 +18,9 @@ main(Args) ->
 				end,
 		    case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 				{ok, [GlobalConfig], _} ->
-					%% ensure that required fields exist in global config
-					case validate_global_config(GlobalConfig) of
-						true -> execute(GlobalConfig, Args);
-						false -> ok
-					end;
+					execute(GlobalConfig, Args);
 				{error, enoent} ->
-					io:format("- failed to read epm global config: file does not exist~n");
+					execute([], Args);
 				{error, Reason} ->
 					io:format("- failed to read epm global config: ~p~n", [Reason])
 			end
@@ -115,45 +111,37 @@ parse_tag(install, "--sha") -> {sha, true};
 parse_tag(install, "--force") -> {force, false};
 parse_tag(_, _) -> undefined.
 
-validate_global_config(GlobalConfig) ->
-	validate_global_config(GlobalConfig, [git_paths, build_path, install_path]).
-	
-validate_global_config(_, []) -> true;
-validate_global_config(GlobalConfig, [Value|Rest]) ->
-	case proplists:get_value(Value, GlobalConfig) of
-		undefined -> 
-			io:format("- missing value in global epm config: ~p~n", [Value]), 
-			false;
-		_ -> 
-			validate_global_config(GlobalConfig, Rest)
-	end.
-
 install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	io:format("+ installing ~s...~n", [ProjectName]),
 	checkout_package(GlobalConfig, User, ProjectName, CommandLineTags),
 	ok.
 	
-checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
-	Paths = proplists:get_value(git_paths, GlobalConfig),
+checkout_package(GlobalConfig, User, ProjectName, _CommandLineTags) ->
+	Paths = proplists:get_value(git_paths, GlobalConfig, ["git://github.com/<user>/<project>.git"]),
 	case search_sources_for_project(Paths, User, ProjectName) of
 		undefined ->
 			io:format("- failed to locate remote repo for ~s~n", [ProjectName]);
 		GitUrl ->
-			BuildPath = proplists:get_value(build_path, GlobalConfig),
+			BuildPath = proplists:get_value(build_path, GlobalConfig, "."),
 			case file:set_cwd(BuildPath) of
 				ok ->
+					delete_dir(ProjectName), %% delete dir if it already exists
 					case os:cmd("git clone " ++ GitUrl ++ " " ++ ProjectName) of
-						Result ->
+						"Initialized empty Git repository" ++ _ = Result ->
 							io:format("+ checking out ~s~n", [GitUrl]),
-							io:format("~s~n", [Result])
+							io:format("~s~n", [Result]),
+							delete_dir(ProjectName);
+						Other ->
+							io:format("- failed to checkout ~s~n", [GitUrl]),
+							io:format("~s~n", [Other])
 					end;
-				{error, Reason} ->
+				{error, _} ->
 					io:format("- failed to change working directory: ~s~n", [BuildPath])
 			end
 	end,
 	ok.
 
-search_sources_for_project(GitPaths, none, ProjectName) ->	
+search_sources_for_project(["git://github.com" ++ _ | _Tail], none, ProjectName) ->	
 	case githubby:repos_search({undefined, undefined}, ProjectName) of
 		{struct,[{<<"repositories">>, Repos}]} ->
 			Filtered = lists:filter(
@@ -172,12 +160,37 @@ search_sources_for_project(GitPaths, none, ProjectName) ->
 		_ -> undefined
 	end;
 	
-search_sources_for_project(_GitPaths, User, ProjectName) ->
+search_sources_for_project(["git://github.com" ++ _ | _Tail], User, ProjectName) ->
 	case githubby:repos_info({undefined, undefined}, User, ProjectName) of
 		{struct,[{<<"repository">>, {struct, Repo}}]} ->
 			Username = binary_to_list(proplists:get_value(<<"owner">>, Repo)),
 			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
 			"git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git";
 		_ -> undefined
-	end.
+	end;
+
+search_sources_for_project(_, _, _) ->
+	io:format("- currently github is the only supported remote repository~n").
 		
+delete_dir(Dir) ->
+	case file:list_dir(Dir) of
+		{ok, Files} ->
+			[begin
+				case file:delete(Dir ++ "/" ++ Filename) of
+					ok -> ok;
+					{error, eperm} ->
+						case file:del_dir(Dir ++ "/" ++ Filename) of
+							ok -> ok;
+							{error, eexist} ->
+								delete_dir(Dir ++ "/" ++ Filename)
+						end
+				end
+			end || Filename <- Files],
+			file:del_dir(Dir);
+		_ ->
+			ok
+	end.
+	
+	
+	
+	
