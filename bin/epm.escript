@@ -4,6 +4,9 @@
 %% main function
 %% -----------------------------------------------------------------------------
 main(Args) ->
+	inets:start(),
+	
+	%% consult global .epm config file in home directory
 	Home = 
 		case init:get_argument(home) of
 			{ok, [[H]]} -> [H];
@@ -11,6 +14,7 @@ main(Args) ->
 		end,
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 		{ok, [GlobalConfig], _} ->
+			%% ensure that required fields exist in global config
 			case validate_global_config(GlobalConfig) of
 				true -> execute(GlobalConfig, Args);
 				false -> ok
@@ -27,24 +31,23 @@ main(Args) ->
 execute(GlobalConfig, ["install" | Args]) ->
     CollectedArgs = collect_args(install, Args),
 	[begin
-		{Name, User} = split_package(Package),
-		case package_info(Name) of
+		case package_info(ProjectName) of
             {error, not_found} ->
-				install_package(GlobalConfig, Name, User, Props);
+				install_package(GlobalConfig, User, ProjectName, CommandLineTags);
 			{error, Reason} ->
-				io:format("- there was a problem with the installed version of ~s: ~p~n", [Name, Reason]),
-				install_package(GlobalConfig, Name, User, Props);
-            {ok, Version} ->
-				io:format("+ skipping ~s: already installed~n", [Name])
+				io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName, Reason]),
+				install_package(GlobalConfig, User, ProjectName, CommandLineTags);
+            {ok, _Version} ->
+				io:format("+ skipping ~s: already installed~n", [ProjectName])
         end
-	end || {Package, Props} <- CollectedArgs],
+	end || {{User, ProjectName}, CommandLineTags} <- CollectedArgs],
     ok;
 
-execute(GlobalConfig, ["info" | Args]) ->
+execute(_GlobalConfig, ["info" | Args]) ->
     io:format("info ~p~n", [collect_args(info, Args)]),
     ok;
 
-execute(GlobalConfig, ["remove" | Args]) ->
+execute(_GlobalConfig, ["remove" | Args]) ->
     io:format("remove ~p~n", [collect_args(remove, Args)]),
     ok;
 
@@ -68,14 +71,15 @@ collect_args(_, [], Acc) -> lists:reverse(Acc);
 collect_args(Target, [Arg | Rest], Acc) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
-			collect_args(Target, Rest, [{Arg, []} | Acc]);
+			{ProjectName, User} = split_package(Arg), %% split into user and project
+			collect_args(Target, Rest, [{{User, ProjectName}, []} | Acc]);
 		{Tag, true} -> %% tag with trailing value
 			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			[{ProjectName, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest1, [{ProjectName, Props ++ [{Tag, Value}]} | Acc1]);
+			[{Project, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest1, [{Project, Props ++ [{Tag, Value}]} | Acc1]);
 		{Tag, false} ->	 %% tag with no trailing value
-			[{ProjectName, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest, [{ProjectName, Props ++ [Tag]} | Acc1])
+			[{Project, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest, [{Project, Props ++ [Tag]} | Acc1])
 	end.
 
 split_package(Raw) -> split_package(Raw, []).
@@ -119,12 +123,47 @@ validate_global_config(GlobalConfig, [Value|Rest]) ->
 			validate_global_config(GlobalConfig, Rest)
 	end.
 
-install_package(GlobalConfig, Name, User, Props) ->
-	io:format("+ installing ~s...~n", [Name]),
-	checkout_package(GlobalConfig, Name, User, Props),
+install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
+	io:format("+ installing ~s...~n", [ProjectName]),
+	checkout_package(GlobalConfig, User, ProjectName, CommandLineTags),
 	ok.
 	
-checkout_package(GlobalConfig, Name, User, Props) ->
-	_Paths = proplists:get_value(git_paths, GlobalConfig),
+checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
+	Paths = proplists:get_value(git_paths, GlobalConfig),
+	case search_sources_for_project(Paths, User, ProjectName, CommandLineTags) of
+		undefined ->
+			io:format("- failed to locate remote repo for ~s~n", [ProjectName]);
+		GitUrl ->
+			io:format("+ checking out ~s~n", [GitUrl])
+	end,
 	ok.
+
+search_sources_for_project(GitPaths, none, ProjectName, CommandLineTags) ->	
+	case githubby:repos_search({undefined, undefined}, ProjectName) of
+		{struct,[{<<"repositories">>, Repos}]} ->
+			Filtered = lists:filter(
+				fun({struct, Props}) ->
+					(proplists:get_value(<<"name">>, Props) == list_to_binary(ProjectName)) andalso
+					(proplists:get_value(<<"language">>, Props) == <<"Erlang">>) andalso
+					(proplists:get_value(<<"type">>, Props) == <<"repo">>)
+				end, Repos),
+			case Filtered of
+				[{struct, Repo}|_] -> 
+					search_sources_for_project(
+						GitPaths, 
+						binary_to_list(proplists:get_value(<<"username">>, Repo)), 
+						ProjectName, 
+						CommandLineTags
+					);
+				[] -> undefined
+			end;
+		_ -> undefined
+	end;
 	
+search_sources_for_project(_GitPaths, User, ProjectName, _CommandLineTags) ->
+	case githubby:repos_info({undefined, undefined}, User, ProjectName) of
+		{struct,[{<<"repository">>, {struct, Repo}}]} ->
+			proplists:get_value(<<"url">>, Repo);
+		_ -> undefined
+	end.
+		
