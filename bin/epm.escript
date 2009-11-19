@@ -4,25 +4,30 @@
 %% main function
 %% -----------------------------------------------------------------------------
 main(Args) ->
-	inets:start(),
-	
-	%% consult global .epm config file in home directory
-	Home = 
-		case init:get_argument(home) of
-			{ok, [[H]]} -> [H];
-			_ -> []
-		end,
-    case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
-		{ok, [GlobalConfig], _} ->
-			%% ensure that required fields exist in global config
-			case validate_global_config(GlobalConfig) of
-				true -> execute(GlobalConfig, Args);
-				false -> ok
-			end;
-		{error, enoent} ->
-			io:format("- failed to read epm global config: file does not exist~n");
-		{error, Reason} ->
-			io:format("- failed to read epm global config: ~p~n", [Reason])
+	case os:find_executable("git") of
+		false ->
+			io:format("- failed to locate git executable~n");
+		_ ->
+			inets:start(),
+			
+			%% consult global .epm config file in home directory
+			Home = 
+				case init:get_argument(home) of
+					{ok, [[H]]} -> [H];
+					_ -> []
+				end,
+		    case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
+				{ok, [GlobalConfig], _} ->
+					%% ensure that required fields exist in global config
+					case validate_global_config(GlobalConfig) of
+						true -> execute(GlobalConfig, Args);
+						false -> ok
+					end;
+				{error, enoent} ->
+					io:format("- failed to read epm global config: file does not exist~n");
+				{error, Reason} ->
+					io:format("- failed to read epm global config: ~p~n", [Reason])
+			end
 	end.
 	
 %% -----------------------------------------------------------------------------
@@ -130,15 +135,25 @@ install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	
 checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	Paths = proplists:get_value(git_paths, GlobalConfig),
-	case search_sources_for_project(Paths, User, ProjectName, CommandLineTags) of
+	case search_sources_for_project(Paths, User, ProjectName) of
 		undefined ->
 			io:format("- failed to locate remote repo for ~s~n", [ProjectName]);
 		GitUrl ->
-			io:format("+ checking out ~s~n", [GitUrl])
+			BuildPath = proplists:get_value(build_path, GlobalConfig),
+			case file:set_cwd(BuildPath) of
+				ok ->
+					case os:cmd("git clone " ++ GitUrl ++ " " ++ ProjectName) of
+						Result ->
+							io:format("+ checking out ~s~n", [GitUrl]),
+							io:format("~s~n", [Result])
+					end;
+				{error, Reason} ->
+					io:format("- failed to change working directory: ~s~n", [BuildPath])
+			end
 	end,
 	ok.
 
-search_sources_for_project(GitPaths, none, ProjectName, CommandLineTags) ->	
+search_sources_for_project(GitPaths, none, ProjectName) ->	
 	case githubby:repos_search({undefined, undefined}, ProjectName) of
 		{struct,[{<<"repositories">>, Repos}]} ->
 			Filtered = lists:filter(
@@ -149,21 +164,20 @@ search_sources_for_project(GitPaths, none, ProjectName, CommandLineTags) ->
 				end, Repos),
 			case Filtered of
 				[{struct, Repo}|_] -> 
-					search_sources_for_project(
-						GitPaths, 
-						binary_to_list(proplists:get_value(<<"username">>, Repo)), 
-						ProjectName, 
-						CommandLineTags
-					);
+					Username = binary_to_list(proplists:get_value(<<"username">>, Repo)),
+					RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
+					"git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git";
 				[] -> undefined
 			end;
 		_ -> undefined
 	end;
 	
-search_sources_for_project(_GitPaths, User, ProjectName, _CommandLineTags) ->
+search_sources_for_project(_GitPaths, User, ProjectName) ->
 	case githubby:repos_info({undefined, undefined}, User, ProjectName) of
 		{struct,[{<<"repository">>, {struct, Repo}}]} ->
-			proplists:get_value(<<"url">>, Repo);
+			Username = binary_to_list(proplists:get_value(<<"owner">>, Repo)),
+			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
+			"git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git";
 		_ -> undefined
 	end.
 		
