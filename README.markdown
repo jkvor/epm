@@ -53,19 +53,22 @@ __Release__ package created for a project and its dependencies according to the 
 
 Each application in the epm dependency hierarchy must include an epm app config specifying the following:
 * deps -- List of application dependancies described as {app_name, <user>/<project>/[<tag>][<branch>][<sha>]}
-* prebuild_command (optional) -- the command to run before build
-* build_command (optional) -- the command to run to build
-* install_command (optional) -- the command to run after build, to install
-* test_command (optional) -- the command to run after build, to test
+* prebuild_command (optional) -- the command to run before build (skipped by default)
+* build_command (optional) -- the command to run to build (defaults to "make")
+* install_command (optional) -- the command to run after build, to install (defaults to "make install")
+* test_command (optional) -- the command to run after build, to test (defaults to "make test")
 * stable (optional) -- the last stable sha for this tree
 
 myapp/myapp.epm
 	[
-		deps, [
-			{mochiweb, "2.0"},
-			{log_roller, "da5a7738c913383cbd06ca3a0139e6eaab03030f"},
-			{etap, "master"}
-		]
+		{deps, [
+			{mochiweb, [{tag, "1.0"}]},
+			{log_roller, [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
+			{etap, [{branch, "master"}]}
+		]},
+		{build_command, "make"},
+		{install_command, "make install"},
+		{test_command, "make test"}
 	].
 
 ### epm Application Specification
