@@ -131,29 +131,26 @@ checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 			case file:set_cwd(BuildPath) of
 				ok ->
 					delete_dir(ProjectName), %% delete dir if it already exists
-					case os:cmd("git clone " ++ GitUrl ++ " " ++ ProjectName) of
+					case os:cmd("git clone " ++ GitUrl ++ " " ++ User ++ "-" ++ ProjectName) of
 						"Initialized empty Git repository" ++ _ = Result ->
 							io:format("+ checking out ~s~n", [GitUrl]),
 							io:format("~s~n", [Result]),
-							case file:set_cwd(ProjectName) of
+							case file:set_cwd(User ++ "-" ++ ProjectName) of
 								ok ->
 									Return = case checkout_correct_version(CommandLineTags) of
 										ok ->
 											case install_dependencies(GlobalConfig, ProjectName) of
 												ok ->
 													case build_project(GlobalConfig, ProjectName, CommandLineTags) of
-														ok ->
-															ok;
-														_ ->
-															stop
+														ok -> ok;
+														_ -> stop
 													end;
-												_ ->
-													stop
+												_ -> stop
 											end;
-										_ ->
-											stop
+										_ -> stop
 									end,
 									delete_dir(ProjectName),
+									ok = file:set_cwd("../"),
 									Return;
 								{error, _} ->
 									io:format("- failed to change working directory: ~s~n", [ProjectName]),
@@ -239,7 +236,7 @@ install_dependencies(GlobalConfig, ProjectName) ->
 						install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
 					(_, _) ->
 						stop
-				end, ok, proplists:get_value(deps, Config));
+				end, ok, proplists:get_value(deps, Config, []));
 		{error, Reason} ->
 			io:format("- failed to read ~s.epm config: ~p~n", [ProjectName, Reason]),
 			stop
