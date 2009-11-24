@@ -62,9 +62,9 @@ Each application in the epm dependency hierarchy must include an epm app config 
 myapp/myapp.epm
 	[
 		{deps, [
-			{mochiweb, [{tag, "1.0"}]},
-			{log_roller, [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
-			{etap, [{branch, "master"}]}
+			{"ngerakines/mochiweb", [{tag, "1.0"}]},
+			{"jacobvorreuter/log_roller", [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
+			{"ngerakines/etap", [{tag, "0.3.4"}]}
 		]},
 		{build_command, "make"},
 		{install_command, "make install"},
