@@ -35,7 +35,9 @@ execute(GlobalConfig, ["install" | Args]) ->
 		fun ({{User, ProjectName}, CommandLineTags}, ok) ->
 				case package_info(ProjectName) of
 		            {error, not_found} ->
-						install_package(GlobalConfig, User, ProjectName, CommandLineTags);
+						AA = install_package(GlobalConfig, User, ProjectName, CommandLineTags),
+						io:format("installed ~p with result ~p~n", [ProjectName, AA]),
+						AA;
 					{error, Reason} ->
 						io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName, Reason]),
 						install_package(GlobalConfig, User, ProjectName, CommandLineTags);
@@ -130,9 +132,9 @@ checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 			BuildPath = proplists:get_value(build_path, GlobalConfig, "."),
 			case file:set_cwd(BuildPath) of
 				ok ->
-					delete_dir(ProjectName), %% delete dir if it already exists
-					case os:cmd("git clone " ++ GitUrl ++ " " ++ User ++ "-" ++ ProjectName) of
-						"Initialized empty Git repository" ++ _ = Result ->
+					delete_dir(User ++ "-" ++ ProjectName), %% delete dir if it already exists
+					case do_cmd("git clone " ++ GitUrl ++ " " ++ User ++ "-" ++ ProjectName) of
+						{0, "Initialized empty Git repository" ++ _ = Result} ->
 							io:format("+ checking out ~s~n", [GitUrl]),
 							io:format("~s~n", [Result]),
 							case file:set_cwd(User ++ "-" ++ ProjectName) of
@@ -156,7 +158,7 @@ checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 									io:format("- failed to change working directory: ~s~n", [ProjectName]),
 									stop
 							end;
-						Other ->
+						{_, Other} ->
 							io:format("- failed to checkout ~s~n", [GitUrl]),
 							io:format("~s~n", [Other]),
 							stop
@@ -199,25 +201,25 @@ search_sources_for_project(_, _, _) ->
 	io:format("- currently github is the only supported remote repository~n").
 	
 checkout_correct_version([{tag, Tag}|_]) ->
-	case os:cmd("git checkout -b \"" ++ Tag ++ "\" \"" ++ Tag ++ "\"") of
-		"Switched to a new branch" ++ _ -> ok;
-		Other ->
+	case do_cmd("git checkout -b \"" ++ Tag ++ "\" \"" ++ Tag ++ "\"") of
+		{0, "Switched to a new branch" ++ _} -> ok;
+		{_, Other} ->
 			io:format("- failed to switch to tag ~s: ~p~n", [Tag, Other]),
 			stop
 	end;
 	
 checkout_correct_version([{branch, Branch}|_]) ->
-	case os:cmd("git checkout -b \"" ++ Branch ++ "\"") of
-		"Switched to a new branch" ++ _ -> ok;
-		Other ->
+	case do_cmd("git checkout -b \"" ++ Branch ++ "\"") of
+		{0, "Switched to a new branch" ++ _} -> ok;
+		{_, Other} ->
 			io:format("- failed to switch to branch ~s: ~p~n", [Branch, Other]),
 			stop
 	end;
 	
 checkout_correct_version([{sha, Sha}|_]) ->
-	case os:cmd("git checkout -b \"" ++ Sha ++ "\"") of
-		"Switched to a new branch" ++ _ -> ok;
-		Other ->
+	case do_cmd("git checkout -b \"" ++ Sha ++ "\"") of
+		{0, "Switched to a new branch" ++ _} -> ok;
+		{_, Other} ->
 			io:format("- failed to switch to sha ~s: ~p~n", [Sha, Other]),
 			stop
 	end;
@@ -239,41 +241,71 @@ install_dependencies(GlobalConfig, ProjectName) ->
 				end, ok, proplists:get_value(deps, Config, []));
 		{error, Reason} ->
 			io:format("- failed to read ~s.epm config: ~p~n", [ProjectName, Reason]),
-			stop
+			ok
 	end.
 	
 build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
-	case file:consult(ProjectName ++ ".epm") of
-		{ok, [Config]} ->
-			case proplists:get_value(install_path, GlobalConfig) of
-				undefined -> ok;
-				Path -> os:putenv("ERL_LIBS", Path)
-			end,
-			
-			case proplists:get_value(prebuild_command, Config) of
-				undefined -> ok;
-				PrebuildCmd -> 
-					io:format("+ prebuild_command: ~s~n", [PrebuildCmd]),
-					io:format("~s~n", [os:cmd(PrebuildCmd)])
-			end,
-			
-			BuildCmd = proplists:get_value(build_command, Config, "make"),
-			io:format("+ build_command: ~s~n", [BuildCmd]),
-			io:format("~s~n", [os:cmd(BuildCmd)]),
-			
-			TestCmd = proplists:get_value(test_command, Config, "make test"),
-			io:format("+ test_command: ~s~n", [TestCmd]),
-			io:format("~s~n", [os:cmd(TestCmd)]),
-			
-			InstallCmd = proplists:get_value(install_command, Config, "make install"),
-			io:format("+ install_command: ~s~n", [InstallCmd]),
-			io:format("~s~n", [os:cmd(InstallCmd)]),
+	Config = 
+	    case file:consult(ProjectName ++ ".epm") of
+    		{ok, [Config0]} -> Config0;
+    		_ -> []
+    	end,
 	
-			ok;
-		{error, Reason} ->
-			io:format("- failed to read ~s.epm config: ~p~n", [ProjectName, Reason]),
-			stop
+	io:format("before ~p~n", [os:getenv("ERL_LIBS")]),
+	case proplists:get_value(install_path, GlobalConfig) of
+		undefined -> ok;
+		Path ->
+			os:putenv("ERL_LIBS", Path)
+	end,
+	io:format("before ~p~n", [os:getenv("ERL_LIBS")]),
+	
+	ExitCode = run_funs_with_exit_code([
+	    fun() -> prebuild(Config) end,
+	    fun() -> build(Config) end,
+	    %fun() -> test(Config) end, %% TODO: add back in test step
+	    fun() -> install(Config) end
+	], 0),
+	
+	case ExitCode of
+	    0 -> ok;
+	    _ -> stop
 	end.
+	
+run_funs_with_exit_code([Fun|Tail], 0) ->
+    run_funs_with_exit_code(Tail, Fun());
+	
+run_funs_with_exit_code(_, _) -> stop.
+
+prebuild(Config) ->
+    case proplists:get_value(prebuild_command, Config) of
+		undefined -> 0;
+		PrebuildCmd -> 
+			io:format("+ prebuild_command: ~s~n", [PrebuildCmd]),
+			{PrebuildExitCode, PrebuildOutput} = do_cmd(PrebuildCmd),
+			io:format("~s~n", [PrebuildOutput]),
+			PrebuildExitCode
+	end.
+	
+build(Config) ->
+    BuildCmd = proplists:get_value(build_command, Config, "make"),
+	io:format("+ build_command: ~s~n", [BuildCmd]),
+	{BuildExitCode, BuildOutput} = do_cmd(BuildCmd),
+	io:format("~s~n", [BuildOutput]),
+    BuildExitCode.
+    
+test(Config) ->
+    TestCmd = proplists:get_value(test_command, Config, "make test"),
+	io:format("+ test_command: ~s~n", [TestCmd]),
+	{TestExitCode, TestOutput} = do_cmd(TestCmd),
+	io:format("~s~n", [TestOutput]),
+	TestExitCode.
+    
+install(Config) ->
+    InstallCmd = proplists:get_value(install_command, Config, "make install"),
+	io:format("+ install_command: ~s~n", [InstallCmd]),
+	{InstallExitCode, InstallOutput} = do_cmd(InstallCmd),
+	io:format("~s~n", [InstallOutput]),
+	InstallExitCode.
 		
 delete_dir(Dir) ->
 	case file:list_dir(Dir) of
@@ -294,5 +326,11 @@ delete_dir(Dir) ->
 			ok
 	end.
 	
-	
+do_cmd(Cmd) ->
+    Results = string:tokens(os:cmd(Cmd ++ "; echo $?"), "\n"),
+    [ExitCode|Other] = lists:reverse(Results),
+    {list_to_integer(ExitCode), string:join(lists:reverse(Other), "\n")}.
+    
+        
+    	
 	
