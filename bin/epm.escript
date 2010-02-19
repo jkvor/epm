@@ -4,26 +4,34 @@
 %% main function
 %% -----------------------------------------------------------------------------
 main(Args) ->
-	case os:find_executable("git") of
-		false ->
-			io:format("- failed to locate git executable~n");
+	case (catch main1(Args)) of
+		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
+			io:format("- ~s~n", [ErrorMsg]);
+		{'EXIT', Other} ->
+			io:format("~p~n", [Other]);
 		_ ->
-			inets:start(),
-			
-			%% consult global .epm config file in home directory
-			Home = 
-				case init:get_argument(home) of
-					{ok, [[H]]} -> [H];
-					_ -> []
-				end,
-		    case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
-				{ok, [GlobalConfig], _} ->
-					execute(GlobalConfig, Args);
-				{error, enoent} ->
-					execute([], Args);
-				{error, Reason} ->
-					io:format("- failed to read epm global config: ~p~n", [Reason])
-			end
+			ok
+	end.
+	
+main1(Args) ->
+	%ensure_erlang_vsn(),
+	ensure_git(),
+	
+	inets:start(),
+	
+	%% consult global .epm config file in home directory
+	Home = 
+		case init:get_argument(home) of
+			{ok, [[H]]} -> [H];
+			_ -> []
+		end,
+    case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
+		{ok, [GlobalConfig], _} ->
+			execute(GlobalConfig, Args);
+		{error, enoent} ->
+			execute([], Args);
+		{error, Reason} ->
+			io:format("- failed to read epm global config: ~p~n", [Reason])
 	end.
 	
 %% -----------------------------------------------------------------------------
@@ -31,23 +39,15 @@ main(Args) ->
 %% -----------------------------------------------------------------------------
 execute(GlobalConfig, ["install" | Args]) ->
     CollectedArgs = collect_args(install, Args),
-	lists:foldl(
-		fun ({{User, ProjectName}, CommandLineTags}, ok) ->
-				case package_info(ProjectName) of
-		            {error, not_found} ->
-						AA = install_package(GlobalConfig, User, ProjectName, CommandLineTags),
-						io:format("installed ~p with result ~p~n", [ProjectName, AA]),
-						AA;
-					{error, Reason} ->
-						io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName, Reason]),
-						install_package(GlobalConfig, User, ProjectName, CommandLineTags);
-		            {ok, _Version} ->
-						io:format("+ skipping ~s: already installed~n", [ProjectName]),
-						ok
-		        end;
-			(_, _) ->
-				stop
-		end, ok, CollectedArgs);
+	[case package_info(ProjectName) of
+        {error, not_found} ->
+			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
+		{error, Reason} ->
+			io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName, Reason]),
+			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
+        {ok, Version} ->
+			io:format("+ skipping ~s: already installed (~p)~n", [ProjectName, Version])
+    end || {{User, ProjectName}, CommandLineTags} <- CollectedArgs];
 
 execute(_GlobalConfig, ["info" | Args]) ->
     io:format("info ~p~n", [collect_args(info, Args)]),
@@ -58,7 +58,7 @@ execute(_GlobalConfig, ["remove" | Args]) ->
     ok;
 
 execute(_, _) ->
-    io:format("epm v0.0.1, 2009 Nick Gerakines, Jacob Vorreuter~n"),
+    io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n"),
     io:format("Usage: epm command arguments~n"),
     io:format("    install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force]~n"),
     io:format("    remove <project>~n"),
@@ -117,111 +117,125 @@ parse_tag(install, "--force") -> {force, false};
 parse_tag(_, _) -> undefined.
 
 install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
+	io:format("+ >> ~s~n", [ProjectName]),
+
+	%% switch to build home dir
+	set_cwd_build_home(GlobalConfig),
+	
+	%% clone repo
+	LocalProjectDir = checkout_package(GlobalConfig, User, ProjectName),
+	
+	%% switch to project dir
+	set_cwd_build_home(GlobalConfig),
+	set_cwd(LocalProjectDir),
+	
+	%% ensure correct branch, tag or sha is checked out
+	checkout_correct_version(CommandLineTags),
+	
+	%% install dependencies from .epm file
+	install_dependencies(GlobalConfig, ProjectName),
+	
 	io:format("~s~n", [string:copies("+", 80)]),
 	io:format("++~s++~n", [string:centre("installing " ++ ProjectName, 76, $ )]),
 	io:format("~s~n", [string:copies("+", 80)]),
-	checkout_package(GlobalConfig, User, ProjectName, CommandLineTags).
 	
-checkout_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
+	%% switch to project dir
+	set_cwd_build_home(GlobalConfig),
+	set_cwd(LocalProjectDir),
+	
+	%% build/install project
+	build_project(GlobalConfig, ProjectName, CommandLineTags),
+	
+	%% switch to build home dir and delete cloned project
+	set_cwd_build_home(GlobalConfig),
+	del_dir(LocalProjectDir),
+	
+	ok.
+
+checkout_package(GlobalConfig, User, ProjectName) ->
 	Paths = proplists:get_value(git_paths, GlobalConfig, ["git://github.com/<user>/<project>.git"]),
-	case search_sources_for_project(Paths, User, ProjectName) of
-		undefined ->
-			io:format("- failed to locate remote repo for ~s~n", [ProjectName]),
-			stop;
-		GitUrl ->
-			BuildPath = proplists:get_value(build_path, GlobalConfig, "."),
-			case file:set_cwd(BuildPath) of
-				ok ->
-					delete_dir(User ++ "-" ++ ProjectName), %% delete dir if it already exists
-					case do_cmd("git clone " ++ GitUrl ++ " " ++ User ++ "-" ++ ProjectName) of
-						{0, "Initialized empty Git repository" ++ _ = Result} ->
-							io:format("+ checking out ~s~n", [GitUrl]),
-							io:format("~s~n", [Result]),
-							case file:set_cwd(User ++ "-" ++ ProjectName) of
-								ok ->
-									Return = case checkout_correct_version(CommandLineTags) of
-										ok ->
-											case install_dependencies(GlobalConfig, ProjectName) of
-												ok ->
-													case build_project(GlobalConfig, ProjectName, CommandLineTags) of
-														ok -> ok;
-														_ -> stop
-													end;
-												_ -> stop
-											end;
-										_ -> stop
-									end,
-									delete_dir(ProjectName),
-									ok = file:set_cwd("../"),
-									Return;
-								{error, _} ->
-									io:format("- failed to change working directory: ~s~n", [ProjectName]),
-									stop
-							end;
-						{_, Other} ->
-							io:format("- failed to checkout ~s~n", [GitUrl]),
-							io:format("~s~n", [Other]),
-							stop
-					end;
-				{error, _} ->
-					io:format("- failed to change working directory: ~s~n", [BuildPath]),
-					stop
-			end
+	{LocalProjectDir, GitUrl} = search_sources_for_project(Paths, User, ProjectName),
+	del_dir(LocalProjectDir), %% delete dir if it already exists
+	io:format("+ checking out ~s~n", [GitUrl]),
+	case do_cmd("git clone " ++ GitUrl ++ " " ++ LocalProjectDir) of
+		{0, "Initialized empty Git repository" ++ _ = Result} ->
+			io:format("~s~n", [Result]),
+			LocalProjectDir;
+		{_, Other} ->
+			io:format("~s~n", [Other]),
+			exit(lists:flatten(io_lib:format("failed to checkout ~s", [GitUrl])))
 	end.
 
 search_sources_for_project(["git://github.com" ++ _ | _Tail], none, ProjectName) ->	
-	case githubby:repos_search({undefined, undefined}, ProjectName) of
-		{struct,[{<<"repositories">>, Repos}]} ->
-			Filtered = lists:filter(
-				fun({struct, Props}) ->
-					(proplists:get_value(<<"name">>, Props) == list_to_binary(ProjectName)) andalso
-					(proplists:get_value(<<"language">>, Props) == <<"Erlang">>) andalso
-					(proplists:get_value(<<"type">>, Props) == <<"repo">>)
-				end, Repos),
-			case Filtered of
-				[{struct, Repo}|_] -> 
-					Username = binary_to_list(proplists:get_value(<<"username">>, Repo)),
-					RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
-					"git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git";
-				[] -> undefined
-			end;
-		_ -> undefined
+	Repos = 
+		case githubby:repos_search({undefined, undefined}, ProjectName) of
+			{struct,[{<<"repositories">>, Repos0}]} -> Repos0;
+			_ -> []
+		end,
+	Filtered = lists:filter(
+		fun({struct, Props}) ->
+			(proplists:get_value(<<"name">>, Props) == list_to_binary(ProjectName)) andalso
+			(proplists:get_value(<<"language">>, Props) == <<"Erlang">>) andalso
+			(proplists:get_value(<<"type">>, Props) == <<"repo">>)
+		end, Repos),
+	case Filtered of
+		[{struct, Repo}|_] -> 
+			Username = binary_to_list(proplists:get_value(<<"username">>, Repo)),
+			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
+			{Username ++ "-" ++ RepoName, "git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git"};
+		[] -> 
+			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
 	end;
 	
 search_sources_for_project(["git://github.com" ++ _ | _Tail], User, ProjectName) ->
-	case githubby:repos_info({undefined, undefined}, User, ProjectName) of
+	case (catch githubby:repos_info({undefined, undefined}, User, ProjectName)) of
 		{struct,[{<<"repository">>, {struct, Repo}}]} ->
 			Username = binary_to_list(proplists:get_value(<<"owner">>, Repo)),
 			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
-			"git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git";
-		_ -> undefined
+			{Username ++ "-" ++ RepoName, "git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git"};
+		{'EXIT', Error} ->
+			io:format("erroring in githubby~n"),
+			exit({'EXIT', Error});
+		_ -> 
+			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
 	end;
 
 search_sources_for_project(_, _, _) ->
-	io:format("- currently github is the only supported remote repository~n").
+	exit(lists:flatten(io_lib:format("currently github is the only supported remote repository"))).
 	
+set_cwd_build_home(GlobalConfig) ->	
+	set_cwd(proplists:get_value(build_path, GlobalConfig, ".")).
+	
+set_cwd(Dir) ->
+	case file:set_cwd(Dir) of
+		ok -> 
+			ok;
+		{error, _} ->
+			exit(lists:flatten(io_lib:format("failed to change working directory: ~s", [Dir])))
+	end.
+
 checkout_correct_version([{tag, Tag}|_]) ->
 	case do_cmd("git checkout -b \"" ++ Tag ++ "\" \"" ++ Tag ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> ok;
+		{0, "Switched to a new branch" ++ _} -> 
+			ok;
 		{_, Other} ->
-			io:format("- failed to switch to tag ~s: ~p~n", [Tag, Other]),
-			stop
+			exit(lists:flatten(io_lib:format("failed to switch to tag ~s: ~p", [Tag, Other])))
 	end;
 	
 checkout_correct_version([{branch, Branch}|_]) ->
 	case do_cmd("git checkout -b \"" ++ Branch ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> ok;
+		{0, "Switched to a new branch" ++ _} -> 
+			ok;
 		{_, Other} ->
-			io:format("- failed to switch to branch ~s: ~p~n", [Branch, Other]),
-			stop
+			exit(lists:flatten(io_lib:format("failed to switch to branch ~s: ~p", [Branch, Other])))
 	end;
 	
 checkout_correct_version([{sha, Sha}|_]) ->
 	case do_cmd("git checkout -b \"" ++ Sha ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> ok;
+		{0, "Switched to a new branch" ++ _} -> 
+			ok;
 		{_, Other} ->
-			io:format("- failed to switch to sha ~s: ~p~n", [Sha, Other]),
-			stop
+			exit(lists:flatten(io_lib:format("failed to switch to sha ~s: ~p", [Sha, Other])))
 	end;
 		
 checkout_correct_version([_|Tail]) ->	
@@ -230,18 +244,18 @@ checkout_correct_version([_|Tail]) ->
 checkout_correct_version(_) -> ok.
 	
 install_dependencies(GlobalConfig, ProjectName) ->
+	Config = read_project_epm_config(ProjectName),
+	[begin
+		{ProjectName1, User} = split_package(Project),
+		install_package(GlobalConfig, User, ProjectName1, CommandLineTags)
+	 end || {Project, CommandLineTags} <- proplists:get_value(deps, Config, [])].
+	
+read_project_epm_config(ProjectName) ->
 	case file:consult(ProjectName ++ ".epm") of
 		{ok, [Config]} ->
-			lists:foldl(
-				fun ({Project, CommandLineTags}, ok) ->
-						{ProjectName1, User} = split_package(Project),
-						install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
-					(_, _) ->
-						stop
-				end, ok, proplists:get_value(deps, Config, []));
+			Config;
 		{error, Reason} ->
-			io:format("- failed to read ~s.epm config: ~p~n", [ProjectName, Reason]),
-			ok
+			exit(lists:flatten(io_lib:format("failed to read ~s.epm config: ~p", [ProjectName, Reason])))
 	end.
 	
 build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
@@ -250,59 +264,41 @@ build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
     		{ok, [Config0]} -> Config0;
     		_ -> []
     	end,
-	
-	io:format("before ~p~n", [os:getenv("ERL_LIBS")]),
-	case proplists:get_value(install_path, GlobalConfig) of
-		undefined -> ok;
-		Path ->
-			os:putenv("ERL_LIBS", Path)
-	end,
-	io:format("before ~p~n", [os:getenv("ERL_LIBS")]),
-	
-	run_funs_with_exit_code([
-	    fun() -> prebuild(Config) end,
-	    fun() -> build(Config) end,
-	    %fun() -> test(Config) end, %% TODO: add back in test step
-	    fun() -> install(Config) end
-	], 0).
-	
-run_funs_with_exit_code([Fun|Tail], 0) ->
-    run_funs_with_exit_code(Tail, Fun());
-run_funs_with_exit_code([], 0) -> ok;
-run_funs_with_exit_code([], _) -> stop.
+	prebuild(Config),
+	build(Config),
+	%test(Config), %% TODO: add back in test step
+	install(Config, proplists:get_value(install_path, GlobalConfig)).
 
 prebuild(Config) ->
     case proplists:get_value(prebuild_command, Config) of
-		undefined -> 0;
+		undefined -> ok;
 		PrebuildCmd -> 
 			io:format("+ prebuild_command: ~s~n", [PrebuildCmd]),
-			{PrebuildExitCode, PrebuildOutput} = do_cmd(PrebuildCmd),
-			io:format("~s~n", [PrebuildOutput]),
-			PrebuildExitCode
+			do_cmd(PrebuildCmd, fail)
 	end.
 	
 build(Config) ->
     BuildCmd = proplists:get_value(build_command, Config, "make"),
 	io:format("+ build_command: ~s~n", [BuildCmd]),
-	{BuildExitCode, BuildOutput} = do_cmd(BuildCmd),
-	io:format("~s~n", [BuildOutput]),
-    BuildExitCode.
+	do_cmd(BuildCmd, fail).
     
-test(Config) ->
-    TestCmd = proplists:get_value(test_command, Config, "make test"),
-	io:format("+ test_command: ~s~n", [TestCmd]),
-	{TestExitCode, TestOutput} = do_cmd(TestCmd),
-	io:format("~s~n", [TestOutput]),
-	TestExitCode.
+% test(Config) ->
+%     TestCmd = proplists:get_value(test_command, Config, "make test"),
+% 	io:format("+ test_command: ~s~n", [TestCmd]),
+% 	{TestExitCode, TestOutput} = do_cmd(TestCmd),
+% 	io:format("~s~n", [TestOutput]),
+% 	TestExitCode.
     
-install(Config) ->
-    InstallCmd = proplists:get_value(install_command, Config, "make install"),
+install(Config, LibDir) ->
+    InstallCmd = 
+		case LibDir of
+			undefined -> "";
+			_ -> "ERL_LIBS=" ++ LibDir ++ " "
+		end ++ proplists:get_value(install_command, Config, "make install"),
 	io:format("+ install_command: ~s~n", [InstallCmd]),
-	{InstallExitCode, InstallOutput} = do_cmd(InstallCmd),
-	io:format("~s~n", [InstallOutput]),
-	InstallExitCode.
+	do_cmd(InstallCmd, fail).
 		
-delete_dir(Dir) ->
+del_dir(Dir) ->
 	case file:list_dir(Dir) of
 		{ok, Files} ->
 			[begin
@@ -312,7 +308,7 @@ delete_dir(Dir) ->
 						case file:del_dir(Dir ++ "/" ++ Filename) of
 							ok -> ok;
 							{error, eexist} ->
-								delete_dir(Dir ++ "/" ++ Filename)
+								del_dir(Dir ++ "/" ++ Filename)
 						end
 				end
 			end || Filename <- Files],
@@ -321,11 +317,37 @@ delete_dir(Dir) ->
 			ok
 	end.
 	
+do_cmd(Cmd, fail) ->
+	case do_cmd(Cmd) of
+		{0, Output} ->
+			io:format("~s~n", [Output]);
+		{_, Output} ->
+			exit(Output)
+	end.
+	
 do_cmd(Cmd) ->
     Results = string:tokens(os:cmd(Cmd ++ "; echo $?"), "\n"),
     [ExitCode|Other] = lists:reverse(Results),
     {list_to_integer(ExitCode), string:join(lists:reverse(Other), "\n")}.
     
-        
+% ensure_erlang_vsn() ->
+% 	%% greater than erts-5.7.4
+% 	[Erts|_] = lists:reverse(string:tokens(code:lib_dir(erts), "/")),
+% 	[_, Vsn] = string:tokens(Erts, "-"),
+% 	Valid = 
+% 		case [list_to_integer(X) || X <- string:tokens(Vsn, ".")] of
+% 			[A,_,_] when A > 5 -> true;
+% 			[5,B,_] when B > 7 -> true;
+% 			[5,7,C] when C >= 4 -> true;
+% 			_ -> false
+% 		end,
+% 	case Valid of
+% 		true -> ok;
+% 		false -> exit("epm requires Erlang version R13B03 or greater")
+% 	end.
     	
-	
+ensure_git() ->
+	case os:find_executable("git") of
+		false -> exit("failed to locate git executable");
+		_ -> ok
+	end.	
