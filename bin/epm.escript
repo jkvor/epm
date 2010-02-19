@@ -259,22 +259,17 @@ build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
 	end,
 	io:format("before ~p~n", [os:getenv("ERL_LIBS")]),
 	
-	ExitCode = run_funs_with_exit_code([
+	run_funs_with_exit_code([
 	    fun() -> prebuild(Config) end,
 	    fun() -> build(Config) end,
 	    %fun() -> test(Config) end, %% TODO: add back in test step
 	    fun() -> install(Config) end
-	], 0),
-	
-	case ExitCode of
-	    0 -> ok;
-	    _ -> stop
-	end.
+	], 0).
 	
 run_funs_with_exit_code([Fun|Tail], 0) ->
     run_funs_with_exit_code(Tail, Fun());
-	
-run_funs_with_exit_code(_, _) -> stop.
+run_funs_with_exit_code([], 0) -> ok;
+run_funs_with_exit_code([], _) -> stop.
 
 prebuild(Config) ->
     case proplists:get_value(prebuild_command, Config) of
