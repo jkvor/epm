@@ -1,4 +1,5 @@
 #!/usr/bin/env escript
+%% -*- erlang -*-
 
 -include_lib("xmerl/include/xmerl.hrl").
 
