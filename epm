@@ -16,10 +16,7 @@ main(Args) ->
 			ok
 	end.
 	
-main1(Args) ->
-	%ensure_erlang_vsn(),
-	ensure_git(),
-	
+main1(Args) ->	
 	inets:start(),
 	
 	%% consult global .epm config file in home directory
@@ -75,7 +72,6 @@ execute(_, _) ->
     io:format("    install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force] [--verbose]~n"),
     io:format("    remove <project> [--verbose]~n"),
     io:format("    info <project> [--verbose]~n"),
-	%io:format("    test [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--verbose]~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -136,23 +132,15 @@ install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	%% switch to build home dir
 	set_cwd_build_home(GlobalConfig),
 	
-	%% clone repo
-	LocalProjectDir = checkout_package(GlobalConfig, User, ProjectName),
+	%% download correct version of package
+	LocalProjectDir = download_package(GlobalConfig, User, ProjectName, CommandLineTags),
 	
-	%% switch to project dir
 	set_cwd_build_home(GlobalConfig),
 	set_cwd(LocalProjectDir),
-	
-	%% ensure correct branch, tag or sha is checked out
-	checkout_correct_version(CommandLineTags),
-	
+		
 	%% install dependencies from .epm file
 	install_dependencies(GlobalConfig, ProjectName),
-	
-	% io:format("~s~n", [string:copies("+", 80)]),
-	% 	io:format("++~s++~n", [string:centre("installing " ++ ProjectName, 76, $ )]),
-	% 	io:format("~s~n", [string:copies("+", 80)]),
-	
+
 	%% switch to project dir
 	set_cwd_build_home(GlobalConfig),
 	set_cwd(LocalProjectDir),
@@ -172,21 +160,42 @@ remove_package(_GlobalConfig, ProjectName, Path) ->
 	print_cmd_output("~s~n", [RemoveCmd]),
 	do_cmd(RemoveCmd, fail).
 
-checkout_package(GlobalConfig, User, ProjectName) ->
-	Paths = proplists:get_value(git_paths, GlobalConfig, ["git://github.com/<user>/<project>.git"]),
-	{LocalProjectDir, GitUrl} = search_sources_for_project(Paths, User, ProjectName),
-	del_dir(LocalProjectDir), %% delete dir if it already exists
-	io:format("+ checking out ~s~n", [GitUrl]),
-	case do_cmd("git clone " ++ GitUrl ++ " " ++ LocalProjectDir) of
-		{0, "Initialized empty Git repository" ++ _ = Result} ->
-			print_cmd_output("~s~n", [Result]),
-			LocalProjectDir;
-		{_, Other} ->
-			print_cmd_output("~s~n", [Other]),
-			exit(lists:flatten(io_lib:format("failed to checkout ~s", [GitUrl])))
-	end.
+download_package(_GlobalConfig, User, ProjectName, CommandLineTags) ->
+    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
+    LocalProjectDir = GitUser ++ "-" ++ GitProjectName,
+    Url = download_url(GitUser, GitProjectName, CommandLineTags),
+    io:format("+ downloading ~s~n", [Url]),
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+        {ok,{{_,200,_},_,Bin}} ->
+            case erl_tar:table({binary, Bin}, [compressed]) of
+                {ok,[_,TarName|_]} ->
+                    del_dir(TarName),
+                    del_dir(LocalProjectDir),
+                    case erl_tar:extract({binary, Bin}, [compressed]) of
+                        ok -> 
+                            rn_dir(TarName, LocalProjectDir),
+                            LocalProjectDir;
+                        {error, Reason} ->
+                            exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason])))
+                    end;
+                {error, Reason1} ->
+                    exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason1])))
+            end;
+        _ ->
+            exit(lists:flatten(io_lib:format("failed to download ~s tarball", [ProjectName])))
+    end.
+            
+download_url(GitUser, GitProjectName, CommandLineTags) ->
+    Vsn = read_command_line_tag_for_download(CommandLineTags),
+    lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [GitUser, GitProjectName, Vsn])).
+    
+read_command_line_tag_for_download([{tag, Tag}|_]) -> Tag;
+read_command_line_tag_for_download([{branch, Branch}|_]) -> Branch;
+read_command_line_tag_for_download([{sha, Sha}|_]) -> Sha;
+read_command_line_tag_for_download([_|Tail]) -> read_command_line_tag_for_download(Tail);
+read_command_line_tag_for_download([]) -> "master".
 
-search_sources_for_project(["git://github.com" ++ _ | _Tail], none, ProjectName) ->	
+search_sources_for_project(none, ProjectName) ->	
 	Repos = 
 		case repos_search(ProjectName) of
 			#xmlElement{name=repositories, content=Repos0} -> Repos0;
@@ -221,20 +230,17 @@ search_sources_for_project(["git://github.com" ++ _ | _Tail], none, ProjectName)
 		end,
 	[Username] = xmerl_xpath:string("/repository/username/text()", Repo),
 	[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
-	{Username#xmlText.value ++ "-" ++ RepoName#xmlText.value, "git://github.com/" ++ Username#xmlText.value ++ "/" ++ RepoName#xmlText.value ++ ".git"};
+	{Username#xmlText.value, RepoName#xmlText.value};
 	
-search_sources_for_project(["git://github.com" ++ _ | _Tail], User, ProjectName) ->
+search_sources_for_project(User, ProjectName) ->
 	case repos_info(User, ProjectName) of
 		#xmlElement{name=repository}=Repo ->
 			[Username] = xmerl_xpath:string("/repository/owner/text()", Repo),
 			[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
-			{Username#xmlText.value ++ "-" ++ RepoName#xmlText.value, "git://github.com/" ++ Username#xmlText.value ++ "/" ++ RepoName#xmlText.value ++ ".git"};
+			{Username#xmlText.value, RepoName#xmlText.value};
 		_ -> 
 			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
-	end;
-
-search_sources_for_project(_, _, _) ->
-	exit(lists:flatten(io_lib:format("currently github is the only supported remote repository"))).
+	end.
 	
 set_cwd_build_home(GlobalConfig) ->	
 	set_cwd(proplists:get_value(build_path, GlobalConfig, ".")).
@@ -246,35 +252,6 @@ set_cwd(Dir) ->
 		{error, _} ->
 			exit(lists:flatten(io_lib:format("failed to change working directory: ~s", [Dir])))
 	end.
-
-checkout_correct_version([{tag, Tag}|_]) ->
-	case do_cmd("git checkout -b \"" ++ Tag ++ "\" \"" ++ Tag ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> 
-			ok;
-		{_, Other} ->
-			exit(lists:flatten(io_lib:format("failed to switch to tag ~s: ~p", [Tag, Other])))
-	end;
-	
-checkout_correct_version([{branch, Branch}|_]) ->
-	case do_cmd("git checkout -b \"" ++ Branch ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> 
-			ok;
-		{_, Other} ->
-			exit(lists:flatten(io_lib:format("failed to switch to branch ~s: ~p", [Branch, Other])))
-	end;
-	
-checkout_correct_version([{sha, Sha}|_]) ->
-	case do_cmd("git checkout -b \"" ++ Sha ++ "\"") of
-		{0, "Switched to a new branch" ++ _} -> 
-			ok;
-		{_, Other} ->
-			exit(lists:flatten(io_lib:format("failed to switch to sha ~s: ~p", [Sha, Other])))
-	end;
-		
-checkout_correct_version([_|Tail]) ->	
-	checkout_correct_version(Tail);
-	
-checkout_correct_version(_) -> ok.
 	
 install_dependencies(GlobalConfig, ProjectName) ->
 	Config = read_project_epm_config(ProjectName),
@@ -325,13 +302,6 @@ build(ProjectName, Config) ->
 	io:format("+ running ~s build command~n", [ProjectName]),
 	print_cmd_output("~s~n", [BuildCmd]),
 	do_cmd(BuildCmd, fail).
-    
-% test(Config) ->
-%     TestCmd = proplists:get_value(test_command, Config, "make test"),
-% 	io:format("+ test_command: ~s~n", [TestCmd]),
-% 	{TestExitCode, TestOutput} = do_cmd(TestCmd),
-% 	io:format("~s~n", [TestOutput]),
-% 	TestExitCode.
 
 install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
@@ -356,7 +326,7 @@ install(ProjectName, Config, LibDir) ->
 			print_cmd_output("~s~n", [InstallCmd]),
 			do_cmd(InstallCmd, fail)
 	end.
-		
+    
 del_dir(Dir) ->
 	case file:list_dir(Dir) of
 		{ok, Files} ->
@@ -375,6 +345,13 @@ del_dir(Dir) ->
 		_ ->
 			ok
 	end.
+	
+rn_dir(OldName, NewName) ->
+    case file:rename(OldName, NewName) of
+        ok -> ok;
+        {error, Reason} ->
+            exit(lists:flatten(io_lib:format("failed to rename ~s to ~s: ~p", [OldName, NewName, Reason])))
+    end.
 	
 do_cmd(Cmd, fail) ->
 	case do_cmd(Cmd) of
@@ -402,28 +379,6 @@ print_cmd_output(Format, Args, true) ->
 	Str = lists:flatten(io_lib:format("    " ++ Format, Args)),
 	Output = re:replace(Str, "\n", "\n    ", [global, {return, list}]),
 	io:format(string:substr(Output, 1, length(Output)-4), []).
-	
-% ensure_erlang_vsn() ->
-% 	%% greater than erts-5.7.4
-% 	[Erts|_] = lists:reverse(string:tokens(code:lib_dir(erts), "/")),
-% 	[_, Vsn] = string:tokens(Erts, "-"),
-% 	Valid = 
-% 		case [list_to_integer(X) || X <- string:tokens(Vsn, ".")] of
-% 			[A,_,_] when A > 5 -> true;
-% 			[5,B,_] when B > 7 -> true;
-% 			[5,7,C] when C >= 4 -> true;
-% 			_ -> false
-% 		end,
-% 	case Valid of
-% 		true -> ok;
-% 		false -> exit("epm requires Erlang version R13B03 or greater")
-% 	end.
-    	
-ensure_git() ->
-	case os:find_executable("git") of
-		false -> exit("failed to locate git executable");
-		_ -> ok
-	end.	
 
 repos_search(ProjectName) ->
 	request_git_url("http://github.com/api/v2/xml/repos/search/" ++ ProjectName).
@@ -433,6 +388,6 @@ repos_info(User, ProjectName) ->
 	
 request_git_url(Url) ->
     {ok, {{_, _RespCode, _}, _Headers, Body}} = 
-		http:request(get, {Url, [{"User-Agent", "GitHubby/0.1"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
+		http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
 	{XmlElement, _} = xmerl_scan:string(Body),
 	XmlElement.
