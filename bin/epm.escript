@@ -1,5 +1,7 @@
 #!/usr/bin/env escript
 
+-include_lib("xmerl/include/xmerl.hrl").
+
 %% -----------------------------------------------------------------------------
 %% main function
 %% -----------------------------------------------------------------------------
@@ -38,7 +40,8 @@ main1(Args) ->
 %% execute function
 %% -----------------------------------------------------------------------------
 execute(GlobalConfig, ["install" | Args]) ->
-    CollectedArgs = collect_args(install, Args),
+    {Projects, Flags} = collect_args(install, Args),
+	put(verbose, lists:member(verbose, Flags)),
 	[case package_info(ProjectName) of
         {error, not_found} ->
 			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
@@ -47,45 +50,54 @@ execute(GlobalConfig, ["install" | Args]) ->
 			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
         {ok, Version} ->
 			io:format("+ skipping ~s: already installed (~p)~n", [ProjectName, Version])
-    end || {{User, ProjectName}, CommandLineTags} <- CollectedArgs];
+    end || {{User, ProjectName}, CommandLineTags} <- Projects];
+
+execute(GlobalConfig, ["remove" | Args]) ->
+	{Projects, Flags} = collect_args(remove, Args),
+	put(verbose, lists:member(verbose, Flags)),
+    [case code:lib_dir(ProjectName) of
+        {error, _} -> io:format("+ skipping ~s: not installed~n", [ProjectName]);
+        Path -> remove_package(GlobalConfig, ProjectName, Path)
+	 end || {{_User, ProjectName}, _CommandLineTags} <- Projects];
 
 execute(_GlobalConfig, ["info" | Args]) ->
-    io:format("info ~p~n", [collect_args(info, Args)]),
-    ok;
-
-execute(_GlobalConfig, ["remove" | Args]) ->
-    io:format("remove ~p~n", [collect_args(remove, Args)]),
-    ok;
-
+	{Projects, Flags} = collect_args(info, Args),
+	put(verbose, lists:member(verbose, Flags)),
+    [case code:lib_dir(ProjectName) of
+        {error, _} -> io:format("+ ~s: not installed~n", [ProjectName]);
+        Path -> io:format("+ ~s installed (~s)~n", [ProjectName, Path])
+	 end || {{_User, ProjectName}, _CommandLineTags} <- Projects];
+	
 execute(_, _) ->
     io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n"),
     io:format("Usage: epm command arguments~n"),
-    io:format("    install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force]~n"),
-    io:format("    remove <project>~n"),
-    io:format("    info [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]~n"),
-	io:format("    test [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>]~n"),
+    io:format("    install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force] [--verbose]~n"),
+    io:format("    remove <project> [--verbose]~n"),
+    io:format("    info <project> [--verbose]~n"),
+	%io:format("    test [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--verbose]~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
 %% internal functions
 %% -----------------------------------------------------------------------------
-collect_args(Target, Args) ->
-    collect_args(Target, Args, []).
+collect_args(Target, Args) -> collect_args(Target, Args, [], []).
 
-collect_args(_, [], Acc) -> lists:reverse(Acc);
+collect_args(_, [], Acc1, Acc2) -> {lists:reverse(Acc1), lists:reverse(Acc2)};
 	
-collect_args(Target, [Arg | Rest], Acc) ->
+collect_args(Target, [Arg | Rest], Acc1, Acc2) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
-			collect_args(Target, Rest, [{{User, ProjectName}, []} | Acc]);
+			collect_args(Target, Rest, [{{User, ProjectName}, []} | Acc1], Acc2);
 		{Tag, true} -> %% tag with trailing value
 			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			[{Project, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest1, [{Project, Props ++ [{Tag, Value}]} | Acc1]);
+			[{Project, Props} | Acc0] = Acc1, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest1, [{Project, Props ++ [{Tag, Value}]} | Acc0], Acc2);
 		{Tag, false} ->	 %% tag with no trailing value
-			[{Project, Props} | Acc1] = Acc, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest, [{Project, Props ++ [Tag]} | Acc1])
+			[{Project, Props} | Acc0] = Acc1, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest, [{Project, Props ++ [Tag]} | Acc0], Acc2);
+		Other ->
+			collect_args(Target, Rest, Acc1, [Other|Acc2])
 	end.
 
 split_package(Raw) -> split_package(Raw, []).
@@ -114,11 +126,12 @@ parse_tag(install, "--tag") -> {tag, true};
 parse_tag(install, "--branch") -> {branch, true};
 parse_tag(install, "--sha") -> {sha, true};
 parse_tag(install, "--force") -> {force, false};
+parse_tag(_, "--verbose") -> verbose;
 parse_tag(_, _) -> undefined.
 
 install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
-	io:format("+ >> ~s~n", [ProjectName]),
-
+	io:format("+ install package ~s~n", [ProjectName]),
+	
 	%% switch to build home dir
 	set_cwd_build_home(GlobalConfig),
 	
@@ -135,9 +148,9 @@ install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	%% install dependencies from .epm file
 	install_dependencies(GlobalConfig, ProjectName),
 	
-	io:format("~s~n", [string:copies("+", 80)]),
-	io:format("++~s++~n", [string:centre("installing " ++ ProjectName, 76, $ )]),
-	io:format("~s~n", [string:copies("+", 80)]),
+	% io:format("~s~n", [string:copies("+", 80)]),
+	% 	io:format("++~s++~n", [string:centre("installing " ++ ProjectName, 76, $ )]),
+	% 	io:format("~s~n", [string:copies("+", 80)]),
 	
 	%% switch to project dir
 	set_cwd_build_home(GlobalConfig),
@@ -151,6 +164,12 @@ install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
 	del_dir(LocalProjectDir),
 	
 	ok.
+	
+remove_package(_GlobalConfig, ProjectName, Path) ->
+	io:format("+ removing package ~s (~s)~n", [ProjectName, Path]),
+	RemoveCmd = "rm -rf " ++ Path,
+	print_cmd_output("~s~n", [RemoveCmd]),
+	do_cmd(RemoveCmd, fail).
 
 checkout_package(GlobalConfig, User, ProjectName) ->
 	Paths = proplists:get_value(git_paths, GlobalConfig, ["git://github.com/<user>/<project>.git"]),
@@ -159,43 +178,56 @@ checkout_package(GlobalConfig, User, ProjectName) ->
 	io:format("+ checking out ~s~n", [GitUrl]),
 	case do_cmd("git clone " ++ GitUrl ++ " " ++ LocalProjectDir) of
 		{0, "Initialized empty Git repository" ++ _ = Result} ->
-			io:format("~s~n", [Result]),
+			print_cmd_output("~s~n", [Result]),
 			LocalProjectDir;
 		{_, Other} ->
-			io:format("~s~n", [Other]),
+			print_cmd_output("~s~n", [Other]),
 			exit(lists:flatten(io_lib:format("failed to checkout ~s", [GitUrl])))
 	end.
 
 search_sources_for_project(["git://github.com" ++ _ | _Tail], none, ProjectName) ->	
 	Repos = 
-		case githubby:repos_search({undefined, undefined}, ProjectName) of
-			{struct,[{<<"repositories">>, Repos0}]} -> Repos0;
+		case repos_search(ProjectName) of
+			#xmlElement{name=repositories, content=Repos0} -> Repos0;
 			_ -> []
 		end,
 	Filtered = lists:filter(
-		fun({struct, Props}) ->
-			(proplists:get_value(<<"name">>, Props) == list_to_binary(ProjectName)) andalso
-			(proplists:get_value(<<"language">>, Props) == <<"Erlang">>) andalso
-			(proplists:get_value(<<"type">>, Props) == <<"repo">>)
-		end, Repos),
-	case Filtered of
-		[{struct, Repo}|_] -> 
-			Username = binary_to_list(proplists:get_value(<<"username">>, Repo)),
-			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
-			{Username ++ "-" ++ RepoName, "git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git"};
-		[] -> 
-			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
-	end;
+		fun (#xmlElement{name=repository}=Repo) ->
+				case {xmerl_xpath:string("/repository/name/text()", Repo),
+					  xmerl_xpath:string("/repository/language/text()", Repo),
+					  xmerl_xpath:string("/repository/type/text()", Repo)} of
+					{[Name], [Lang], [Type]} ->
+						Name#xmlText.value == ProjectName andalso
+						Lang#xmlText.value == "Erlang" andalso
+						Type#xmlText.value == "repo";
+					_ ->
+						false
+				end;
+			(_) -> false
+		end, Repos),		
+	if
+		Filtered == [] ->
+			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
+		true -> ok
+	end,
+	Repo = 
+		case lists:filter(
+			fun(R) ->
+				xmerl_xpath:string("/repository/username/text()", R) == [#xmlText{value="epm"}]
+			end, Filtered) of
+			[] -> hd(Filtered);
+			[R1] -> R1				
+		end,
+	[Username] = xmerl_xpath:string("/repository/username/text()", Repo),
+	[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
+	{Username#xmlText.value ++ "-" ++ RepoName#xmlText.value, "git://github.com/" ++ Username#xmlText.value ++ "/" ++ RepoName#xmlText.value ++ ".git"};
 	
 search_sources_for_project(["git://github.com" ++ _ | _Tail], User, ProjectName) ->
-	case (catch githubby:repos_info({undefined, undefined}, User, ProjectName)) of
-		{struct,[{<<"repository">>, {struct, Repo}}]} ->
-			Username = binary_to_list(proplists:get_value(<<"owner">>, Repo)),
-			RepoName = binary_to_list(proplists:get_value(<<"name">>, Repo)),
-			{Username ++ "-" ++ RepoName, "git://github.com/" ++ Username ++ "/" ++ RepoName ++ ".git"};
-		{'EXIT', Error} ->
-			io:format("erroring in githubby~n"),
-			exit({'EXIT', Error});
+	case repos_info(User, ProjectName) of
+		#xmlElement{name=repository}=Repo ->
+			[Username] = xmerl_xpath:string("/repository/owner/text()", Repo),
+			[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
+			{Username#xmlText.value ++ "-" ++ RepoName#xmlText.value, "git://github.com/" ++ Username#xmlText.value ++ "/" ++ RepoName#xmlText.value ++ ".git"};
 		_ -> 
 			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
 	end;
@@ -247,7 +279,15 @@ install_dependencies(GlobalConfig, ProjectName) ->
 	Config = read_project_epm_config(ProjectName),
 	[begin
 		{ProjectName1, User} = split_package(Project),
-		install_package(GlobalConfig, User, ProjectName1, CommandLineTags)
+		case package_info(ProjectName1) of
+	        {error, not_found} ->
+				install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
+			{error, Reason} ->
+				io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName1, Reason]),
+				install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
+	        {ok, Version} ->
+				io:format("+ skipping dependency ~s: already installed (~p)~n", [ProjectName1, Version])
+	    end
 	 end || {Project, CommandLineTags} <- proplists:get_value(deps, Config, [])].
 	
 read_project_epm_config(ProjectName) ->
@@ -255,7 +295,8 @@ read_project_epm_config(ProjectName) ->
 		{ok, [Config]} ->
 			Config;
 		{error, Reason} ->
-			exit(lists:flatten(io_lib:format("failed to read ~s.epm config: ~p", [ProjectName, Reason])))
+			io:format("- failed to read ~s.epm config: ~p - using default values~n", [ProjectName, Reason]),
+			[]
 	end.
 	
 build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
@@ -264,22 +305,24 @@ build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
     		{ok, [Config0]} -> Config0;
     		_ -> []
     	end,
-	prebuild(Config),
-	build(Config),
+	prebuild(ProjectName, Config),
+	build(ProjectName, Config),
 	%test(Config), %% TODO: add back in test step
-	install(Config, proplists:get_value(install_path, GlobalConfig)).
+	install(ProjectName, Config, proplists:get_value(install_path, GlobalConfig)).
 
-prebuild(Config) ->
+prebuild(ProjectName, Config) ->
     case proplists:get_value(prebuild_command, Config) of
 		undefined -> ok;
 		PrebuildCmd -> 
-			io:format("+ prebuild_command: ~s~n", [PrebuildCmd]),
+			io:format("+ running ~s prebuild command~n", [ProjectName]),
+			print_cmd_output("~s~n", [PrebuildCmd]),
 			do_cmd(PrebuildCmd, fail)
 	end.
 	
-build(Config) ->
+build(ProjectName, Config) ->
     BuildCmd = proplists:get_value(build_command, Config, "make"),
-	io:format("+ build_command: ~s~n", [BuildCmd]),
+	io:format("+ running ~s build command~n", [ProjectName]),
+	print_cmd_output("~s~n", [BuildCmd]),
 	do_cmd(BuildCmd, fail).
     
 % test(Config) ->
@@ -288,15 +331,30 @@ build(Config) ->
 % 	{TestExitCode, TestOutput} = do_cmd(TestCmd),
 % 	io:format("~s~n", [TestOutput]),
 % 	TestExitCode.
-    
-install(Config, LibDir) ->
-    InstallCmd = 
-		case LibDir of
-			undefined -> "";
-			_ -> "ERL_LIBS=" ++ LibDir ++ " "
-		end ++ proplists:get_value(install_command, Config, "make install"),
-	io:format("+ install_command: ~s~n", [InstallCmd]),
-	do_cmd(InstallCmd, fail).
+
+install(ProjectName, Config, undefined) ->
+	install(ProjectName, Config, code:lib_dir());
+
+install(ProjectName, Config, LibDir) ->
+	case proplists:get_value(install_command, Config) of
+		undefined ->
+			case file:consult("ebin/" ++ ProjectName ++ ".app") of
+				{ok,[{application,_,Props}]} ->
+					Vsn = proplists:get_value(vsn, Props, "0.0"),
+					Dir = LibDir ++ "/" ++ ProjectName ++ "-" ++ Vsn,
+					InstallCmd = "mkdir -p " ++ Dir ++ "; cp -R ./* " ++ Dir,
+					io:format("+ running ~s install command~n", [ProjectName]),
+					print_cmd_output("~s~n", [InstallCmd]),
+					do_cmd(InstallCmd, fail),
+					code:add_pathz(Dir);
+				_ ->
+					exit(lists:flatten(io_lib:format("failed to read ebin/~s.app", [ProjectName])))
+			end;
+		InstallCmd ->
+			io:format("+ running ~s install command~n", [ProjectName]),
+			print_cmd_output("~s~n", [InstallCmd]),
+			do_cmd(InstallCmd, fail)
+	end.
 		
 del_dir(Dir) ->
 	case file:list_dir(Dir) of
@@ -319,8 +377,10 @@ del_dir(Dir) ->
 	
 do_cmd(Cmd, fail) ->
 	case do_cmd(Cmd) of
+		{0, ""} ->
+			ok;
 		{0, Output} ->
-			io:format("~s~n", [Output]);
+			print_cmd_output("~s~n", [Output]);
 		{_, Output} ->
 			exit(Output)
 	end.
@@ -330,6 +390,18 @@ do_cmd(Cmd) ->
     [ExitCode|Other] = lists:reverse(Results),
     {list_to_integer(ExitCode), string:join(lists:reverse(Other), "\n")}.
     
+print_cmd_output(Format, Args) ->
+	case get(verbose) of
+		undefined -> print_cmd_output(Format, Args, false);
+		Verbose -> print_cmd_output(Format, Args, Verbose)
+	end.
+	
+print_cmd_output(_, _, false) -> ok; %% do not print verbose output
+print_cmd_output(Format, Args, true) ->
+	Str = lists:flatten(io_lib:format("    " ++ Format, Args)),
+	Output = re:replace(Str, "\n", "\n    ", [global, {return, list}]),
+	io:format(string:substr(Output, 1, length(Output)-4), []).
+	
 % ensure_erlang_vsn() ->
 % 	%% greater than erts-5.7.4
 % 	[Erts|_] = lists:reverse(string:tokens(code:lib_dir(erts), "/")),
@@ -351,3 +423,15 @@ ensure_git() ->
 		false -> exit("failed to locate git executable");
 		_ -> ok
 	end.	
+
+repos_search(ProjectName) ->
+	request_git_url("http://github.com/api/v2/xml/repos/search/" ++ ProjectName).
+	
+repos_info(User, ProjectName) ->
+	request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName).
+	
+request_git_url(Url) ->
+    {ok, {{_, _RespCode, _}, _Headers, Body}} = 
+		http:request(get, {Url, [{"User-Agent", "GitHubby/0.1"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
+	{XmlElement, _} = xmerl_scan:string(Body),
+	XmlElement.
