@@ -14,10 +14,17 @@ main(Args) ->
 			io:format("~p~n", [Other]);
 		_ ->
 			ok
-	end.
+	end,
+	dets:close(epm_index).
 	
 main1(Args) ->	
 	inets:start(),
+	
+	case dets:open_file(epm_index, [{type, set}]) of
+	    {ok, _} -> ok;
+	    {error, Reason1} ->
+	        exit(lists:flatten(io_lib:format("failed to open epm index file: ~p", [Reason1])))
+	end,
 	
 	%% consult global .epm config file in home directory
 	Home = 
@@ -38,25 +45,41 @@ main1(Args) ->
 %% execute function
 %% -----------------------------------------------------------------------------
 execute(GlobalConfig, ["install" | Args]) ->
-    {Projects, Flags} = collect_args(install, Args),
+    {{{User, ProjectName}, CommandLineTags}, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	[case package_info(ProjectName) of
-        {error, not_found} ->
-			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
-		{error, Reason} ->
-			io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName, Reason]),
-			install_package(GlobalConfig, User, ProjectName, CommandLineTags);
-        {ok, Version} ->
-			io:format("+ skipping ~s: already installed (~p)~n", [ProjectName, Version])
-    end || {{User, ProjectName}, CommandLineTags} <- Projects];
+	Vsn = read_vsn_from_args(CommandLineTags),
+	Apps = gather_remote_deps(User, ProjectName, Vsn),
+	{Installed, NotInstalled} = filter_installed_deps(Apps),
+	case NotInstalled of
+	    [] ->
+	        io:format("+ nothing to do: ~s and dependencies already installed~n", [ProjectName]);
+	    _ ->
+	        case Installed of
+	            [] -> ok;
+	            _ ->
+	                io:format("===============================~n"),
+                    io:format("Packages already installed:~n"),
+                    io:format("===============================~n"),
+                    [io:format("    + ~s-~s-~s (~s)~n", [U,N,V,AppVsn]) || {{U,N,V},AppVsn} <- Installed]
+            end,
+	        io:format("===============================~n"),
+	        io:format("Install the following packages?~n"),
+	        io:format("===============================~n"),
+            [io:format("    + ~s-~s-~s~n", [U,N,V]) || {U,N,V} <- NotInstalled],
+            io:format("[y/n] "),
+            case io:get_chars("", 1) of
+                "y" -> 
+                    [install_package(GlobalConfig, U, N, V, CommandLineTags) || {U,N,V} <- NotInstalled];
+                _ -> ok
+            end
+	end;
 
 execute(GlobalConfig, ["remove" | Args]) ->
-	{Projects, Flags} = collect_args(remove, Args),
+	{{{User, ProjectName}, CommandLineTags}, Flags} = collect_args(remove, Args),
 	put(verbose, lists:member(verbose, Flags)),
-    [case code:lib_dir(ProjectName) of
-        {error, _} -> io:format("+ skipping ~s: not installed~n", [ProjectName]);
-        Path -> remove_package(GlobalConfig, ProjectName, Path)
-	 end || {{_User, ProjectName}, _CommandLineTags} <- Projects];
+	Vsn = read_vsn_from_args(CommandLineTags),
+	Apps = gather_local_deps(User, ProjectName, Vsn),
+	remove_package(GlobalConfig, User, ProjectName);
 
 execute(_GlobalConfig, ["info" | Args]) ->
 	{Projects, Flags} = collect_args(info, Args),
@@ -75,44 +98,27 @@ execute(_, _) ->
     ok.
 
 %% -----------------------------------------------------------------------------
-%% internal functions
+%% parse input args
 %% -----------------------------------------------------------------------------
-collect_args(Target, Args) -> collect_args(Target, Args, [], []).
-
-collect_args(_, [], Acc1, Acc2) -> {lists:reverse(Acc1), lists:reverse(Acc2)};
-	
-collect_args(Target, [Arg | Rest], Acc1, Acc2) ->
+collect_args(Target, Args) -> 
+    collect_args(Target, Args, undefined, []).
+collect_args(_, [], Package, Flags) -> 
+    {Package, lists:reverse(Flags)};
+collect_args(Target, [Arg | Rest], Package, Flags) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
-			collect_args(Target, Rest, [{{User, ProjectName}, []} | Acc1], Acc2);
+			collect_args(Target, Rest, {{User, ProjectName}, []}, Flags);
 		{Tag, true} -> %% tag with trailing value
 			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			[{Project, Props} | Acc0] = Acc1, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest1, [{Project, Props ++ [{Tag, Value}]} | Acc0], Acc2);
+			{PackageCreds, Props} = Package, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest1, {PackageCreds, Props ++ [{Tag, Value}]}, Flags);
 		{Tag, false} ->	 %% tag with no trailing value
-			[{Project, Props} | Acc0] = Acc1, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest, [{Project, Props ++ [Tag]} | Acc0], Acc2);
+			{PackageCreds, Props} = Package, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest, {PackageCreds, Props ++ [Tag]}, Flags);
 		Other ->
-			collect_args(Target, Rest, Acc1, [Other|Acc2])
+			collect_args(Target, Rest, Package, [Other|Flags])
 	end.
-
-split_package(Raw) -> split_package(Raw, []).
-split_package([], Package) -> {Package, none};
-split_package([47 | Package], User) -> {Package, User};
-split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
-
-package_info(Package) when is_list(Package) ->
-    package_info(list_to_atom(Package));
-package_info(Package) ->
-    case code:lib_dir(Package) of
-        {error, bad_name} -> {error, not_found};
-        Path ->
-            case file:consult(Path ++ "/ebin/" ++ atom_to_list(Package) ++ ".app") of
-                {ok, [{application, _, AppContents}]} -> {ok, proplists:get_value(vsn, AppContents)};
-                _ -> {error, no_app_file}
-            end
-    end.
 
 %% @spec parse_tag(Target, Arg) -> {Tag, HasValue} | undefined
 %%		 Target = atom()
@@ -126,74 +132,99 @@ parse_tag(install, "--force") -> {force, false};
 parse_tag(_, "--verbose") -> verbose;
 parse_tag(_, _) -> undefined.
 
-install_package(GlobalConfig, User, ProjectName, CommandLineTags) ->
+split_package(Raw) -> split_package(Raw, []).
+split_package([], Package) -> {Package, none};
+split_package([47 | Package], User) -> {Package, User};
+split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
+
+%% -----------------------------------------------------------------------------
+%% package info
+%% -----------------------------------------------------------------------------
+gather_local_deps(User, ProjectName, Vsn) ->
+    case dets:lookup(epm_index, {User, ProjectName, Vsn}) of
+        [{_, _, Dependencies}] -> Dependencies;
+        _ -> undefined
+    end.
+
+filter_installed_deps(Apps) ->
+    filter_installed_deps(Apps, [], []).
+    
+filter_installed_deps([], Installed, NotInstalled) ->
+    {lists:reverse(Installed), NotInstalled};
+    
+filter_installed_deps([App|Tail], Installed, NotInstalled) ->
+    case installed_app_vsn(App) of
+        undefined -> filter_installed_deps(Tail, Installed, [App|NotInstalled]);
+        AppVsn -> filter_installed_deps(Tail, [{App, AppVsn}|Installed], NotInstalled)
+    end.
+    
+installed_app_vsn(App) ->
+    case dets:lookup(epm_index, App) of
+        [{{_,Name,_}, InstallDir}] -> 
+            case file:consult(InstallDir ++ "/ebin/" ++ Name ++ ".app") of
+                {ok, [{application,_,Props}]} ->
+                    proplists:get_value(vsn, Props);
+                {error, _} ->
+                    undefined
+            end;
+        _ -> undefined
+    end.
+
+%% -----------------------------------------------------------------------------
+%% INSTALL
+%% -----------------------------------------------------------------------------
+install_package(GlobalConfig, User, ProjectName, Vsn, CommandLineTags) ->
 	io:format("+ install package ~s~n", [ProjectName]),
 	
 	%% switch to build home dir
 	set_cwd_build_home(GlobalConfig),
 	
 	%% download correct version of package
-	LocalProjectDir = download_package(GlobalConfig, User, ProjectName, CommandLineTags),
+	LocalProjectDir = download_package(User, ProjectName, Vsn),
 	
-	set_cwd_build_home(GlobalConfig),
-	set_cwd(LocalProjectDir),
-		
-	%% install dependencies from .epm file
-	install_dependencies(GlobalConfig, ProjectName),
-
 	%% switch to project dir
 	set_cwd_build_home(GlobalConfig),
 	set_cwd(LocalProjectDir),
 	
 	%% build/install project
-	build_project(GlobalConfig, ProjectName, CommandLineTags),
+	InstallDir = build_project(GlobalConfig, ProjectName, CommandLineTags),
 	
 	%% switch to build home dir and delete cloned project
 	set_cwd_build_home(GlobalConfig),
 	del_dir(LocalProjectDir),
 	
-	ok.
+	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir}),
 	
-remove_package(_GlobalConfig, ProjectName, Path) ->
-	io:format("+ removing package ~s (~s)~n", [ProjectName, Path]),
-	RemoveCmd = "rm -rf " ++ Path,
-	print_cmd_output("~s~n", [RemoveCmd]),
-	do_cmd(RemoveCmd, fail).
+	ok.
 
-download_package(_GlobalConfig, User, ProjectName, CommandLineTags) ->
-    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
-    LocalProjectDir = GitUser ++ "-" ++ GitProjectName,
-    Url = download_url(GitUser, GitProjectName, CommandLineTags),
-    io:format("+ downloading ~s~n", [Url]),
-    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
-        {ok,{{_,200,_},_,Bin}} ->
-            case erl_tar:table({binary, Bin}, [compressed]) of
-                {ok,[_,TarName|_]} ->
-                    del_dir(TarName),
-                    del_dir(LocalProjectDir),
-                    case erl_tar:extract({binary, Bin}, [compressed]) of
-                        ok -> 
-                            rn_dir(TarName, LocalProjectDir),
-                            LocalProjectDir;
-                        {error, Reason} ->
-                            exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason])))
-                    end;
-                {error, Reason1} ->
-                    exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason1])))
-            end;
+remove_package(GlobalConfig, User, ProjectName) ->
+    Match = 
+        case User of
+            none -> {{'$1',ProjectName,'$2'},'$3'};
+            _ -> {{User,ProjectName,'$1'},'$2'}
+        end,
+    case dets:match(epm_index, Match) of
+        [[GitVsn,InstallDir]] ->
+            io:format("+ removing package ~s (~s)~n", [ProjectName, InstallDir]),
+            RemoveCmd = "rm -rf " ++ InstallDir,
+            print_cmd_output("~s~n", [RemoveCmd]),
+            do_cmd(RemoveCmd, fail),
+            dets:delete(epm_index, {User,ProjectName,GitVsn});
+        [[GitUser,GitVsn,InstallDir]] ->
+            io:format("+ removing package ~s (~s)~n", [ProjectName, InstallDir]),
+            RemoveCmd = "rm -rf " ++ InstallDir,
+            print_cmd_output("~s~n", [RemoveCmd]),
+            do_cmd(RemoveCmd, fail),
+            dets:delete(epm_index, {GitUser,ProjectName,GitVsn});
         _ ->
-            exit(lists:flatten(io_lib:format("failed to download ~s tarball", [ProjectName])))
+            io:format("- ~s is not installed~n", [ProjectName])
     end.
-            
-download_url(GitUser, GitProjectName, CommandLineTags) ->
-    Vsn = read_command_line_tag_for_download(CommandLineTags),
-    lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [GitUser, GitProjectName, Vsn])).
     
-read_command_line_tag_for_download([{tag, Tag}|_]) -> Tag;
-read_command_line_tag_for_download([{branch, Branch}|_]) -> Branch;
-read_command_line_tag_for_download([{sha, Sha}|_]) -> Sha;
-read_command_line_tag_for_download([_|Tail]) -> read_command_line_tag_for_download(Tail);
-read_command_line_tag_for_download([]) -> "master".
+read_vsn_from_args([{tag, Tag}|_]) -> Tag;
+read_vsn_from_args([{branch, Branch}|_]) -> Branch;
+read_vsn_from_args([{sha, Sha}|_]) -> Sha;
+read_vsn_from_args([_|Tail]) -> read_vsn_from_args(Tail);
+read_vsn_from_args([]) -> "master".
 
 search_sources_for_project(none, ProjectName) ->	
 	Repos = 
@@ -253,20 +284,20 @@ set_cwd(Dir) ->
 			exit(lists:flatten(io_lib:format("failed to change working directory: ~s", [Dir])))
 	end.
 	
-install_dependencies(GlobalConfig, ProjectName) ->
-	Config = read_project_epm_config(ProjectName),
-	[begin
-		{ProjectName1, User} = split_package(Project),
-		case package_info(ProjectName1) of
-	        {error, not_found} ->
-				install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
-			{error, Reason} ->
-				io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName1, Reason]),
-				install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
-	        {ok, Version} ->
-				io:format("+ skipping dependency ~s: already installed (~p)~n", [ProjectName1, Version])
-	    end
-	 end || {Project, CommandLineTags} <- proplists:get_value(deps, Config, [])].
+% install_dependencies(GlobalConfig, ProjectName) ->
+%   Config = read_project_epm_config(ProjectName),
+%   [begin
+%       {ProjectName1, User} = split_package(Project),
+%       case package_info(ProjectName1) of
+%           {error, not_found} ->
+%               install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
+%           {error, Reason} ->
+%               io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName1, Reason]),
+%               install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
+%           {ok, Version} ->
+%               io:format("+ skipping dependency ~s: already installed (~p)~n", [ProjectName1, Version])
+%       end
+%    end || {Project, CommandLineTags} <- proplists:get_value(deps, Config, [])].
 	
 read_project_epm_config(ProjectName) ->
 	case file:consult(ProjectName ++ ".epm") of
@@ -307,24 +338,18 @@ install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
 
 install(ProjectName, Config, LibDir) ->
-	case proplists:get_value(install_command, Config) of
-		undefined ->
-			case file:consult("ebin/" ++ ProjectName ++ ".app") of
-				{ok,[{application,_,Props}]} ->
-					Vsn = proplists:get_value(vsn, Props, "0.0"),
-					Dir = LibDir ++ "/" ++ ProjectName ++ "-" ++ Vsn,
-					InstallCmd = "mkdir -p " ++ Dir ++ "; cp -R ./* " ++ Dir,
-					io:format("+ running ~s install command~n", [ProjectName]),
-					print_cmd_output("~s~n", [InstallCmd]),
-					do_cmd(InstallCmd, fail),
-					code:add_pathz(Dir);
-				_ ->
-					exit(lists:flatten(io_lib:format("failed to read ebin/~s.app", [ProjectName])))
-			end;
-		InstallCmd ->
+	case file:consult("ebin/" ++ ProjectName ++ ".app") of
+		{ok,[{application,_,Props}]} ->
+			Vsn = proplists:get_value(vsn, Props, "0.0"),
+			Dir = LibDir ++ "/" ++ ProjectName ++ "-" ++ Vsn,
+			InstallCmd = "mkdir -p " ++ Dir ++ "; cp -R ./* " ++ Dir,
 			io:format("+ running ~s install command~n", [ProjectName]),
 			print_cmd_output("~s~n", [InstallCmd]),
-			do_cmd(InstallCmd, fail)
+			do_cmd(InstallCmd, fail),
+			code:add_pathz(Dir),
+			Dir;
+		_ ->
+			exit(lists:flatten(io_lib:format("failed to read ebin/~s.app", [ProjectName])))
 	end.
     
 del_dir(Dir) ->
@@ -380,6 +405,53 @@ print_cmd_output(Format, Args, true) ->
 	Output = re:replace(Str, "\n", "\n    ", [global, {return, list}]),
 	io:format(string:substr(Output, 1, length(Output)-4), []).
 
+%% -----------------------------------------------------------------------------
+%% Compile Dependencies
+%% -----------------------------------------------------------------------------
+gather_remote_deps(User, ProjectName, Vsn) ->
+    G = digraph:new(),
+    gather_remote_deps(User, ProjectName, Vsn, G, undefined),
+    Deps = digraph_utils:topsort(G),
+    digraph:delete(G),
+    Deps.
+    
+gather_remote_deps(User, ProjectName, Vsn, G, Parent) ->
+    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
+    
+    case digraph:vertex(G, {GitUser, GitProjectName, Vsn}) of
+        false -> digraph:add_vertex(G, {GitUser, GitProjectName, Vsn});
+        _ -> ok
+    end,
+    
+    case Parent of
+        undefined -> ok;
+        {_, ParentProjectName, _} ->
+            case digraph:add_edge(G, Parent, {GitUser, GitProjectName, Vsn}) of
+                {error, {bad_edge, _}} -> exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, GitProjectName])));
+                {error, Reason} -> exit(lists:flatten(io_lib:format("failed to traverse dependency tree: ~p", [Reason])));
+                _ -> ok
+            end
+    end,
+    
+    [begin
+        {DepName, DepUser} = split_package(Dep),
+        DepVsn = read_vsn_from_args(Args),
+        gather_remote_deps(DepUser, DepName, DepVsn, G, {GitUser, GitProjectName, Vsn})
+     end || {Dep, Args} <- get_package_deps(GitUser, GitProjectName, Vsn)],
+     
+    ok.
+
+%% -----------------------------------------------------------------------------
+%% GitHub HTTP Requests
+%% -----------------------------------------------------------------------------
+get_package_deps(User, ProjectName, Vsn) ->
+    Url = lists:flatten(io_lib:format("http://github.com/~s/~s/raw/~s/~s.epm", [User, ProjectName, Vsn, ProjectName])),
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
+        {ok, {{_,200,_}, _, Body}} -> 
+            proplists:get_value(deps, eval(Body), []);
+        _ -> []
+    end.
+    
 repos_search(ProjectName) ->
 	request_git_url("http://github.com/api/v2/xml/repos/search/" ++ ProjectName).
 	
@@ -391,3 +463,51 @@ request_git_url(Url) ->
 		http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
 	{XmlElement, _} = xmerl_scan:string(Body),
 	XmlElement.
+
+download_package(User, ProjectName, Vsn) ->
+    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
+    LocalProjectDir = GitUser ++ "-" ++ GitProjectName,
+    Url = download_url(GitUser, GitProjectName, Vsn),
+    io:format("+ downloading ~s~n", [Url]),
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+        {ok,{{_,200,_},_,Bin}} ->
+            case erl_tar:table({binary, Bin}, [compressed]) of
+                {ok,[_,TarName|_]} ->
+                    del_dir(TarName),
+                    del_dir(LocalProjectDir),
+                    case erl_tar:extract({binary, Bin}, [compressed]) of
+                        ok -> 
+                            rn_dir(TarName, LocalProjectDir),
+                            LocalProjectDir;
+                        {error, Reason} ->
+                            exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason])))
+                    end;
+                {error, Reason1} ->
+                    exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason1])))
+            end;
+        {ok, {{_,404,_},_,_}} ->
+            exit(lists:flatten(io_lib:format("remote project does not exist: ~s/~s/~s", [GitUser, GitProjectName, Vsn])));
+        Error ->
+            io:format("~p~n", [Error]),
+            exit(lists:flatten(io_lib:format("failed to download ~s tarball", [ProjectName])))
+    end.
+            
+download_url(GitUser, GitProjectName, Vsn) ->
+    lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [GitUser, GitProjectName, Vsn])).
+    
+%% -----------------------------------------------------------------------------
+%% util functions
+%% -----------------------------------------------------------------------------
+eval(Str) ->
+    case erl_scan:string(Str) of
+        {ok,Tokens,_} ->
+            case erl_parse:parse_exprs(Tokens) of
+                {ok,Forms} ->
+                    case erl_eval:exprs(Forms,[]) of
+                        {value, Terms, _} -> Terms;
+                        _ -> error
+                    end;
+                _ -> error
+            end;
+        _ -> error
+    end.
