@@ -326,6 +326,8 @@ package_info(User, ProjectName, _Vsn) ->
 		_ ->
 			lists:foldl(
 				fun(Repo, Count) ->
+					%Tags = repos_tags(Repo#repository.owner, ProjectName),
+					%Branches = repos_branches(Repo#repository.owner, ProjectName),
 					case Count of
 						0 -> ok;
 						_ -> io:format("~n")
@@ -336,6 +338,8 @@ package_info(User, ProjectName, _Vsn) ->
 						{"followers", Repo#repository.followers},
 						{"homepage", Repo#repository.homepage},
 						{"description", Repo#repository.description}
+						%{"tags", string:join([atom_to_list(Tag) || {Tag, _Sha} <- Tags], ", ")},
+						%{"branches", string:join([atom_to_list(Branch) || {Branch, _Sha} <- Branches], ", ")}
 					]],
 					Count+1
 				end, 0, Repos)
@@ -652,6 +656,24 @@ repos_info(User, ProjectName) ->
 			undefined
 	end.
 	
+repos_tags(User, ProjectName) ->
+	case request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags") of
+		#xmlElement{name=tags, content=Tags} ->
+			[begin
+				{Tag, Sha}
+			 end || #xmlElement{name=Tag, content=[#xmlText{value=Sha}]} <- Tags];
+		_ -> []
+	end.
+	
+repos_branches(User, ProjectName) ->
+	case request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches") of
+		#xmlElement{name=branches, content=Branches} ->
+			[begin
+				{Branch, Sha}
+			 end || #xmlElement{name=Branch, content=[#xmlText{value=Sha}]} <- Branches];
+		_ -> []
+	end.
+		
 request_git_url(Url) ->
     {ok, {{_, _RespCode, _}, _Headers, Body}} = 
 		http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
