@@ -9,19 +9,20 @@
 ### USAGE
 
 __Install__ a given project  
-	epm install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force] [--verbose]
+	epm install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 	epm install JacobVorreuter/excavator
 	epm install JacobVorreuter/excavator --tag 0.3
 	epm install JacobVorreuter/excavator --branch scheduler
 	epm install JacobVorreuter/excavator --sha d3dc9a345000b73401b214da55f6e6af3629d39a
+	epm install JacobVorreuter/excavator --tag 0.3 log_roller --tag 0.4
 
 __Info__ regarding project details  
-	epm info [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--verbose]
+	epm info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 	epm info ngerakines/etap
 
 __Remove__ a given project  
-	epm remove <project> [--verbose]
-	epm remove etap
+	epm remove [<project>,] [--verbose]
+	epm remove etap log_roller
 
 ### Global epm config
 

@@ -45,14 +45,13 @@ main1(Args) ->
 %% execute function
 %% -----------------------------------------------------------------------------
 execute(GlobalConfig, ["install" | Args]) ->
-    {{{User, ProjectName}, CommandLineTags}, Flags} = collect_args(install, Args),
+    {Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	Vsn = read_vsn_from_args(CommandLineTags),
-	Apps = gather_remote_deps(User, ProjectName, Vsn),
+	Apps = gather_remote_deps(Packages),
 	{Installed, NotInstalled} = filter_installed_deps(Apps),
 	case NotInstalled of
 	    [] ->
-	        io:format("+ nothing to do: ~s and dependencies already installed~n", [ProjectName]);
+	        io:format("+ nothing to do: packages and dependencies already installed~n");
 	    _ ->
 	        case Installed of
 	            [] -> ok;
@@ -60,34 +59,48 @@ execute(GlobalConfig, ["install" | Args]) ->
 	                io:format("===============================~n"),
                     io:format("Packages already installed:~n"),
                     io:format("===============================~n"),
-                    [io:format("    + ~s-~s-~s (~s)~n", [U,N,V,AppVsn]) || {{U,N,V},AppVsn} <- Installed]
+                    [io:format("    + ~s-~s-~s (~s)~n", [U,N,V,proplists:get_value(vsn, Props)]) || {{U,N,V},Props} <- Installed]
             end,
 	        io:format("===============================~n"),
 	        io:format("Install the following packages?~n"),
 	        io:format("===============================~n"),
-            [io:format("    + ~s-~s-~s~n", [U,N,V]) || {U,N,V} <- NotInstalled],
+            [io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- NotInstalled],
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
-                    [install_package(GlobalConfig, U, N, V, CommandLineTags) || {U,N,V} <- NotInstalled];
+                    [install_package(GlobalConfig, U, N, V, Props) || {{U,N,V},Props} <- NotInstalled];
                 _ -> ok
             end
 	end;
 
 execute(GlobalConfig, ["remove" | Args]) ->
-	{{{User, ProjectName}, CommandLineTags}, Flags} = collect_args(remove, Args),
+	{Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	Vsn = read_vsn_from_args(CommandLineTags),
-	Apps = gather_local_deps(User, ProjectName, Vsn),
-	remove_package(GlobalConfig, User, ProjectName);
+	Installed = dict:to_list(gather_local_deps(Packages)),
+	io:format("deps: ~p~n", [Installed]),
+	case Installed of
+	    [] ->
+	        io:format("+ nothing to remove: no packages installed~n");
+	    _ ->
+	        io:format("===============================~n"),
+	        io:format("Remove the following packages?~n"),
+	        io:format("===============================~n"),
+            [io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- Installed],
+            io:format("[y/n] "),
+            case io:get_chars("", 1) of
+                "y" -> 
+                    [remove_package(GlobalConfig, U, N, V, InstallDir) || {{U,N,V},InstallDir} <- Installed];
+                _ -> ok
+            end
+    end;
 
 execute(_GlobalConfig, ["info" | Args]) ->
-	{Projects, Flags} = collect_args(info, Args),
+	{Packages, Flags} = collect_args(info, Args),
 	put(verbose, lists:member(verbose, Flags)),
-    [case code:lib_dir(ProjectName) of
-        {error, _} -> io:format("+ ~s: not installed~n", [ProjectName]);
-        Path -> io:format("+ ~s installed (~s)~n", [ProjectName, Path])
-	 end || {{_User, ProjectName}, _CommandLineTags} <- Projects];
+    [begin
+        Vsn = read_vsn_from_args(CommandLineTags, undefined),
+        package_info(User, ProjectName, Vsn)
+     end || {{User, ProjectName}, CommandLineTags} <- Packages];
 	
 execute(_, _) ->
     io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n"),
@@ -101,23 +114,23 @@ execute(_, _) ->
 %% parse input args
 %% -----------------------------------------------------------------------------
 collect_args(Target, Args) -> 
-    collect_args(Target, Args, undefined, []).
-collect_args(_, [], Package, Flags) -> 
-    {Package, lists:reverse(Flags)};
-collect_args(Target, [Arg | Rest], Package, Flags) ->
+    collect_args(Target, Args, [], []).
+collect_args(_, [], Packages, Flags) -> 
+    {lists:reverse(Packages), lists:reverse(Flags)};
+collect_args(Target, [Arg | Rest], Packages, Flags) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
-			collect_args(Target, Rest, {{User, ProjectName}, []}, Flags);
+			collect_args(Target, Rest, [{{User, ProjectName}, []}|Packages], Flags);
 		{Tag, true} -> %% tag with trailing value
 			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			{PackageCreds, Props} = Package, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest1, {PackageCreds, Props ++ [{Tag, Value}]}, Flags);
+			[{PackageCreds, Props}|OtherPackages] = Packages, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest1, [{PackageCreds, Props ++ [{Tag, Value}]}|OtherPackages], Flags);
 		{Tag, false} ->	 %% tag with no trailing value
-			{PackageCreds, Props} = Package, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest, {PackageCreds, Props ++ [Tag]}, Flags);
-		Other ->
-			collect_args(Target, Rest, Package, [Other|Flags])
+			[{PackageCreds, Props}|OtherPackages] = Packages, %% this tag applies to the last project on the stack
+			collect_args(Target, Rest, [{PackageCreds, Props ++ [Tag]}|OtherPackages], Flags);
+		Flag ->
+			collect_args(Target, Rest, Packages, [Flag|Flags])
 	end.
 
 %% @spec parse_tag(Target, Arg) -> {Tag, HasValue} | undefined
@@ -128,8 +141,13 @@ collect_args(Target, [Arg | Rest], Package, Flags) ->
 parse_tag(install, "--tag") -> {tag, true};
 parse_tag(install, "--branch") -> {branch, true};
 parse_tag(install, "--sha") -> {sha, true};
-parse_tag(install, "--force") -> {force, false};
+
+parse_tag(info, "--tag") -> {tag, true};
+parse_tag(info, "--branch") -> {branch, true};
+parse_tag(info, "--sha") -> {sha, true};
+
 parse_tag(_, "--verbose") -> verbose;
+
 parse_tag(_, _) -> undefined.
 
 split_package(Raw) -> split_package(Raw, []).
@@ -140,27 +158,59 @@ split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
 %% -----------------------------------------------------------------------------
 %% package info
 %% -----------------------------------------------------------------------------
-gather_local_deps(User, ProjectName, Vsn) ->
-    case dets:lookup(epm_index, {User, ProjectName, Vsn}) of
-        [{_, _, Dependencies}] -> Dependencies;
-        _ -> undefined
-    end.
-
+gather_local_deps(Packages) ->
+    gather_local_deps(Packages, dict:new()).
+    
+gather_local_deps([], Dict) ->
+    Dict;
+    
+gather_local_deps([{{User, ProjectName}, CommandLineTags}|Tail], Dict) ->
+    Vsn = read_vsn_from_args(CommandLineTags),
+    gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict);
+    
+gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict) ->
+    Match = 
+        case User of
+            none -> {{'$1',ProjectName,Vsn},'$2','$3'};
+            _ -> {{User,ProjectName,Vsn},'$1','$2'}
+        end,
+        
+    Lookup = 
+        case dets:match(epm_index, Match) of
+            [[InstallDir,Deps]] -> [User,Vsn,InstallDir,Deps];
+            [[GitUser,InstallDir,Deps]] -> [GitUser,Vsn,InstallDir,Deps];
+            _ -> undefined
+        end,
+    
+    Dict1 = 
+        case Lookup of
+            undefined ->
+                Dict;
+            [User1, Vsn1, InstallDir1, Deps1] ->
+                TempDict1 = lists:foldl(
+                    fun({DepUser, DepName, DepVsn}, TempDict) ->
+                        gather_local_deps([{DepUser, DepName, DepVsn}], TempDict)
+                    end, Dict, Deps1),
+                dict:store({User1, ProjectName, Vsn1}, InstallDir1, TempDict1)
+        end,
+    
+    gather_local_deps(Tail, Dict1).
+    
 filter_installed_deps(Apps) ->
     filter_installed_deps(Apps, [], []).
     
 filter_installed_deps([], Installed, NotInstalled) ->
     {lists:reverse(Installed), NotInstalled};
     
-filter_installed_deps([App|Tail], Installed, NotInstalled) ->
+filter_installed_deps([{App,Info}|Tail], Installed, NotInstalled) ->
     case installed_app_vsn(App) of
-        undefined -> filter_installed_deps(Tail, Installed, [App|NotInstalled]);
-        AppVsn -> filter_installed_deps(Tail, [{App, AppVsn}|Installed], NotInstalled)
+        undefined -> filter_installed_deps(Tail, Installed, [{App,Info}|NotInstalled]);
+        AppVsn -> filter_installed_deps(Tail, [{App,[{vsn, AppVsn}|Info]}|Installed], NotInstalled)
     end.
     
 installed_app_vsn(App) ->
     case dets:lookup(epm_index, App) of
-        [{{_,Name,_}, InstallDir}] -> 
+        [{{_,Name,_}, InstallDir, _Deps}] -> 
             case file:consult(InstallDir ++ "/ebin/" ++ Name ++ ".app") of
                 {ok, [{application,_,Props}]} ->
                     proplists:get_value(vsn, Props);
@@ -170,10 +220,49 @@ installed_app_vsn(App) ->
         _ -> undefined
     end.
 
+package_info(ProjectName, undefined) ->
+    io:format("- ~s not installed~n", [ProjectName]).
+
+package_info(none, ProjectName, undefined) ->
+    case dets:match(epm_index, {{'$1',ProjectName,'$2'},'$3','$4'}) of
+        [] -> package_info(ProjectName, undefined);
+        [[User,Vsn,InstallDir,Deps]] ->
+            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+    end;    
+package_info(none, ProjectName, Vsn) ->
+    case dets:match(epm_index, {{'$1',ProjectName,Vsn},'$2','$3'}) of
+        [] -> package_info(ProjectName, undefined);
+        [[User,InstallDir,Deps]] ->
+            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+    end;
+package_info(User, ProjectName, undefined) ->
+    case dets:match(epm_index, {{User,ProjectName,'$1'},'$2','$3'}) of
+        [] -> package_info(ProjectName, undefined);
+        [[Vsn,InstallDir,Deps]] ->
+            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+    end;
+package_info(User, ProjectName, Vsn) ->
+    case dets:match(epm_index, {{User,ProjectName,Vsn},'$1','$2'}) of
+        [] -> package_info(ProjectName, undefined);
+        [[InstallDir,Deps]] ->
+            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+    end.
+
+package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
+    io:format("+ ~s/~s/~s installed in ~s~n", [User, ProjectName, Vsn, InstallDir]),
+    case Deps of
+        [] -> ok;
+        _ ->
+            io:format("  dependencies: ~n   ~s~n", [string:join([
+             begin
+                lists:flatten(io_lib:format("~s/~s/~s", [U,N,V]))
+             end || {U,N,V} <- Deps], ",\n   ")])
+    end.
+    
 %% -----------------------------------------------------------------------------
 %% INSTALL
 %% -----------------------------------------------------------------------------
-install_package(GlobalConfig, User, ProjectName, Vsn, CommandLineTags) ->
+install_package(GlobalConfig, User, ProjectName, Vsn, Props) ->
 	io:format("+ install package ~s~n", [ProjectName]),
 	
 	%% switch to build home dir
@@ -187,44 +276,31 @@ install_package(GlobalConfig, User, ProjectName, Vsn, CommandLineTags) ->
 	set_cwd(LocalProjectDir),
 	
 	%% build/install project
-	InstallDir = build_project(GlobalConfig, ProjectName, CommandLineTags),
+	InstallDir = build_project(GlobalConfig, ProjectName),
 	
 	%% switch to build home dir and delete cloned project
 	set_cwd_build_home(GlobalConfig),
 	del_dir(LocalProjectDir),
 	
-	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir}),
+	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir, proplists:get_value(deps, Props)}),
 	
 	ok.
 
-remove_package(GlobalConfig, User, ProjectName) ->
-    Match = 
-        case User of
-            none -> {{'$1',ProjectName,'$2'},'$3'};
-            _ -> {{User,ProjectName,'$1'},'$2'}
-        end,
-    case dets:match(epm_index, Match) of
-        [[GitVsn,InstallDir]] ->
-            io:format("+ removing package ~s (~s)~n", [ProjectName, InstallDir]),
-            RemoveCmd = "rm -rf " ++ InstallDir,
-            print_cmd_output("~s~n", [RemoveCmd]),
-            do_cmd(RemoveCmd, fail),
-            dets:delete(epm_index, {User,ProjectName,GitVsn});
-        [[GitUser,GitVsn,InstallDir]] ->
-            io:format("+ removing package ~s (~s)~n", [ProjectName, InstallDir]),
-            RemoveCmd = "rm -rf " ++ InstallDir,
-            print_cmd_output("~s~n", [RemoveCmd]),
-            do_cmd(RemoveCmd, fail),
-            dets:delete(epm_index, {GitUser,ProjectName,GitVsn});
-        _ ->
-            io:format("- ~s is not installed~n", [ProjectName])
-    end.
+remove_package(_GlobalConfig, User, ProjectName, Vsn, InstallDir) ->
+    io:format("+ removing package ~s/~s/~s from ~s~n", [User, ProjectName, Vsn, InstallDir]),
+    RemoveCmd = "rm -rf " ++ InstallDir,
+    print_cmd_output("~s~n", [RemoveCmd]),
+    do_cmd(RemoveCmd, fail),
+    dets:delete(epm_index, {User,ProjectName,Vsn}).
     
-read_vsn_from_args([{tag, Tag}|_]) -> Tag;
-read_vsn_from_args([{branch, Branch}|_]) -> Branch;
-read_vsn_from_args([{sha, Sha}|_]) -> Sha;
-read_vsn_from_args([_|Tail]) -> read_vsn_from_args(Tail);
-read_vsn_from_args([]) -> "master".
+read_vsn_from_args(Args) ->
+    read_vsn_from_args(Args, "master").
+    
+read_vsn_from_args([{tag, Tag}|_], _) -> Tag;
+read_vsn_from_args([{branch, Branch}|_], _) -> Branch;
+read_vsn_from_args([{sha, Sha}|_], _) -> Sha;
+read_vsn_from_args([_|Tail], Default) -> read_vsn_from_args(Tail, Default);
+read_vsn_from_args([], Default) -> Default.
 
 search_sources_for_project(none, ProjectName) ->	
 	Repos = 
@@ -283,32 +359,8 @@ set_cwd(Dir) ->
 		{error, _} ->
 			exit(lists:flatten(io_lib:format("failed to change working directory: ~s", [Dir])))
 	end.
-	
-% install_dependencies(GlobalConfig, ProjectName) ->
-%   Config = read_project_epm_config(ProjectName),
-%   [begin
-%       {ProjectName1, User} = split_package(Project),
-%       case package_info(ProjectName1) of
-%           {error, not_found} ->
-%               install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
-%           {error, Reason} ->
-%               io:format("- there was a problem with the installed version of ~s: ~p~n", [ProjectName1, Reason]),
-%               install_package(GlobalConfig, User, ProjectName1, CommandLineTags);
-%           {ok, Version} ->
-%               io:format("+ skipping dependency ~s: already installed (~p)~n", [ProjectName1, Version])
-%       end
-%    end || {Project, CommandLineTags} <- proplists:get_value(deps, Config, [])].
-	
-read_project_epm_config(ProjectName) ->
-	case file:consult(ProjectName ++ ".epm") of
-		{ok, [Config]} ->
-			Config;
-		{error, Reason} ->
-			io:format("- failed to read ~s.epm config: ~p - using default values~n", [ProjectName, Reason]),
-			[]
-	end.
-	
-build_project(GlobalConfig, ProjectName, _CommandLineTags) ->
+		
+build_project(GlobalConfig, ProjectName) ->
 	Config = 
 	    case file:consult(ProjectName ++ ".epm") of
     		{ok, [Config0]} -> Config0;
@@ -337,7 +389,7 @@ build(ProjectName, Config) ->
 install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
 
-install(ProjectName, Config, LibDir) ->
+install(ProjectName, _Config, LibDir) ->
 	case file:consult("ebin/" ++ ProjectName ++ ".app") of
 		{ok,[{application,_,Props}]} ->
 			Vsn = proplists:get_value(vsn, Props, "0.0"),
@@ -408,20 +460,19 @@ print_cmd_output(Format, Args, true) ->
 %% -----------------------------------------------------------------------------
 %% Compile Dependencies
 %% -----------------------------------------------------------------------------
-gather_remote_deps(User, ProjectName, Vsn) ->
+gather_remote_deps(Packages) ->
     G = digraph:new(),
-    gather_remote_deps(User, ProjectName, Vsn, G, undefined),
+    AppInfo = gather_remote_deps(Packages, G, undefined, dict:new()),
     Deps = digraph_utils:topsort(G),
     digraph:delete(G),
-    Deps.
-    
-gather_remote_deps(User, ProjectName, Vsn, G, Parent) ->
+    [{Dep, dict:fetch(Dep, AppInfo)} || Dep <- Deps].
+   
+gather_remote_deps([], _, _, Dict) -> Dict;
+gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dict) ->
     {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
+    Vsn = read_vsn_from_args(CommandLineTags),
     
-    case digraph:vertex(G, {GitUser, GitProjectName, Vsn}) of
-        false -> digraph:add_vertex(G, {GitUser, GitProjectName, Vsn});
-        _ -> ok
-    end,
+    digraph:add_vertex(G, {GitUser, GitProjectName, Vsn}),
     
     case Parent of
         undefined -> ok;
@@ -433,13 +484,16 @@ gather_remote_deps(User, ProjectName, Vsn, G, Parent) ->
             end
     end,
     
-    [begin
-        {DepName, DepUser} = split_package(Dep),
-        DepVsn = read_vsn_from_args(Args),
-        gather_remote_deps(DepUser, DepName, DepVsn, G, {GitUser, GitProjectName, Vsn})
-     end || {Dep, Args} <- get_package_deps(GitUser, GitProjectName, Vsn)],
-     
-    ok.
+    {Deps, Dict1} = lists:mapfoldl(
+        fun({Dep, Args}, TempDict) -> 
+            {DepName, DepUser} = split_package(Dep),
+            DepVsn = read_vsn_from_args(Args),
+            TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, {GitUser, GitProjectName, Vsn}, TempDict),
+            {{DepUser, DepName, DepVsn}, TempDict1} 
+        end, Dict, get_package_deps(GitUser, GitProjectName, Vsn)),
+    
+    Dict2 = dict:store({GitUser, GitProjectName, Vsn}, [{deps, Deps}], Dict1),
+    gather_remote_deps(Tail, G, Parent, Dict2).
 
 %% -----------------------------------------------------------------------------
 %% GitHub HTTP Requests
