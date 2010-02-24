@@ -3,10 +3,13 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 
+-record(repository, {name, owner, description, homepage, followers}).
+
 %% -----------------------------------------------------------------------------
 %% main function
 %% -----------------------------------------------------------------------------
 main(Args) ->
+	io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n~n"),
 	case (catch main1(Args)) of
 		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
 			io:format("- ~s~n", [ErrorMsg]);
@@ -15,7 +18,8 @@ main(Args) ->
 		_ ->
 			ok
 	end,
-	dets:close(epm_index).
+	dets:close(epm_index),
+	io:format("~n").
 	
 main1(Args) ->	
 	inets:start(),
@@ -77,7 +81,6 @@ execute(GlobalConfig, ["remove" | Args]) ->
 	{Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
 	Installed = dict:to_list(gather_local_deps(Packages)),
-	io:format("deps: ~p~n", [Installed]),
 	case Installed of
 	    [] ->
 	        io:format("+ nothing to remove: no packages installed~n");
@@ -97,13 +100,54 @@ execute(GlobalConfig, ["remove" | Args]) ->
 execute(_GlobalConfig, ["info" | Args]) ->
 	{Packages, Flags} = collect_args(info, Args),
 	put(verbose, lists:member(verbose, Flags)),
-    [begin
-        Vsn = read_vsn_from_args(CommandLineTags, undefined),
-        package_info(User, ProjectName, Vsn)
-     end || {{User, ProjectName}, CommandLineTags} <- Packages];
+    {Installed, NotInstalled} = lists:foldl(
+		fun({{User, ProjectName}, CommandLineTags}, {TempInstalled, TempNotInstalled}) ->
+			Vsn = read_vsn_from_args(CommandLineTags, undefined),
+	        case local_package_info(User, ProjectName, Vsn) of
+				undefined ->
+					{TempInstalled, [{User, ProjectName, Vsn}|TempNotInstalled]};
+				{GitUser,GitVsn,InstallDir,Deps} ->
+					{[{GitUser,ProjectName,GitVsn,InstallDir,Deps}|TempInstalled], TempNotInstalled}
+			end	
+		end, {[], []}, Packages),
+	case Installed of
+		[] -> ok;
+		_ ->
+			io:format("===============================~n"),
+			io:format("INSTALLED~n"),
+			io:format("===============================~n"),
+			
+			lists:foldl(
+				fun({User, ProjectName, Vsn, InstallDir, Deps}, Count) ->
+					case Count of
+						0 -> ok;
+						_ -> io:format("~n")
+					end,
+					package_info(User, ProjectName, Vsn, InstallDir, Deps),
+					Count+1
+				end, 0, lists:reverse(Installed))
+	end,
+	
+	case NotInstalled of
+		[] -> ok;
+		_ ->
+			case Installed of
+				[] -> ok;
+				_ -> io:format("~n")
+			end,
+			io:format("===============================~n"),
+			io:format("AVAILABLE~n"),
+			io:format("===============================~n"),
+			
+			[package_info(User, ProjectName, Vsn) || 
+				{User, ProjectName, Vsn} <- lists:reverse(NotInstalled)]
+	end;
+        
+	
+execute(_GlobalConfig, ["list" | _Args]) ->
+	ok;
 	
 execute(_, _) ->
-    io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n"),
     io:format("Usage: epm command arguments~n"),
     io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
     io:format("    remove [<project>,] [--verbose]~n"),
@@ -157,7 +201,7 @@ split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
 
 %% -----------------------------------------------------------------------------
 %% package info
-%% -----------------------------------------------------------------------------
+%% -----------------------------------------------------------------------------	
 gather_local_deps(Packages) ->
     gather_local_deps(Packages, dict:new()).
     
@@ -220,45 +264,83 @@ installed_app_vsn(App) ->
         _ -> undefined
     end.
 
-package_info(ProjectName, undefined) ->
-    io:format("- ~s not installed~n", [ProjectName]).
-
-package_info(none, ProjectName, undefined) ->
+local_package_info(none, ProjectName, undefined) ->
     case dets:match(epm_index, {{'$1',ProjectName,'$2'},'$3','$4'}) of
-        [] -> package_info(ProjectName, undefined);
+        [] -> undefined;
         [[User,Vsn,InstallDir,Deps]] ->
-            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+            {User,Vsn,InstallDir,Deps}
     end;    
-package_info(none, ProjectName, Vsn) ->
+local_package_info(none, ProjectName, Vsn) ->
     case dets:match(epm_index, {{'$1',ProjectName,Vsn},'$2','$3'}) of
-        [] -> package_info(ProjectName, undefined);
+        [] -> undefined;
         [[User,InstallDir,Deps]] ->
-            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+            {User,Vsn,InstallDir,Deps}
     end;
-package_info(User, ProjectName, undefined) ->
+local_package_info(User, ProjectName, undefined) ->
     case dets:match(epm_index, {{User,ProjectName,'$1'},'$2','$3'}) of
-        [] -> package_info(ProjectName, undefined);
+        [] -> undefined;
         [[Vsn,InstallDir,Deps]] ->
-            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+            {User,Vsn,InstallDir,Deps}
     end;
-package_info(User, ProjectName, Vsn) ->
+local_package_info(User, ProjectName, Vsn) ->
     case dets:match(epm_index, {{User,ProjectName,Vsn},'$1','$2'}) of
-        [] -> package_info(ProjectName, undefined);
+        [] -> undefined;
         [[InstallDir,Deps]] ->
-            package_info(User,ProjectName,Vsn,InstallDir,Deps)
+            {User,Vsn,InstallDir,Deps}
     end.
 
+% INSTALLED
 package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
-    io:format("+ ~s/~s/~s installed in ~s~n", [User, ProjectName, Vsn, InstallDir]),
+	Repo = repos_info(User, ProjectName),
+    [io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
+		{"name", ProjectName},
+		{"owner", User},
+		{"vsn", Vsn},
+		{"install dir", InstallDir},
+		{"homepage", Repo#repository.homepage},
+		{"description", Repo#repository.description}
+	]],
     case Deps of
         [] -> ok;
         _ ->
-            io:format("  dependencies: ~n   ~s~n", [string:join([
-             begin
-                lists:flatten(io_lib:format("~s/~s/~s", [U,N,V]))
-             end || {U,N,V} <- Deps], ",\n   ")])
+            io:format("  dependencies: ~n    ~s~n", [string:join([
+             case U of
+				none -> lists:flatten(io_lib:format("~s/~s", [N,V]));
+				_ -> lists:flatten(io_lib:format("~s/~s/~s", [U,N,V]))
+             end || {U,N,V} <- Deps], "\n    ")])
     end.
     
+%% NOT INSTALLED
+package_info(User, ProjectName, _Vsn) ->
+	Repos = 
+		case User of
+			none -> repos_search(ProjectName);
+			_ -> 
+				case repos_info(User, ProjectName) of
+					undefined -> [];
+					R -> [R]
+				end
+		end,
+	case Repos of
+		[] -> ok;
+		_ ->
+			lists:foldl(
+				fun(Repo, Count) ->
+					case Count of
+						0 -> ok;
+						_ -> io:format("~n")
+					end,
+					[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
+						{"name", ProjectName},
+						{"owner", Repo#repository.owner},
+						{"followers", Repo#repository.followers},
+						{"homepage", Repo#repository.homepage},
+						{"description", Repo#repository.description}
+					]],
+					Count+1
+				end, 0, Repos)
+	end.
+
 %% -----------------------------------------------------------------------------
 %% INSTALL
 %% -----------------------------------------------------------------------------
@@ -303,48 +385,21 @@ read_vsn_from_args([_|Tail], Default) -> read_vsn_from_args(Tail, Default);
 read_vsn_from_args([], Default) -> Default.
 
 search_sources_for_project(none, ProjectName) ->	
-	Repos = 
-		case repos_search(ProjectName) of
-			#xmlElement{name=repositories, content=Repos0} -> Repos0;
-			_ -> []
-		end,
-	Filtered = lists:filter(
-		fun (#xmlElement{name=repository}=Repo) ->
-				case {xmerl_xpath:string("/repository/name/text()", Repo),
-					  xmerl_xpath:string("/repository/language/text()", Repo),
-					  xmerl_xpath:string("/repository/type/text()", Repo)} of
-					{[Name], [Lang], [Type]} ->
-						Name#xmlText.value == ProjectName andalso
-						Lang#xmlText.value == "Erlang" andalso
-						Type#xmlText.value == "repo";
-					_ ->
-						false
-				end;
-			(_) -> false
-		end, Repos),		
+	Repos = repos_search(ProjectName),
 	if
-		Filtered == [] ->
+		Repos == [] ->
 			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
 		true -> ok
 	end,
-	Repo = 
-		case lists:filter(
-			fun(R) ->
-				xmerl_xpath:string("/repository/username/text()", R) == [#xmlText{value="epm"}]
-			end, Filtered) of
-			[] -> hd(Filtered);
-			[R1] -> R1				
-		end,
-	[Username] = xmerl_xpath:string("/repository/username/text()", Repo),
-	[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
-	{Username#xmlText.value, RepoName#xmlText.value};
+	case lists:filter(fun(#repository{owner="epm"}) -> true; (_) -> false end, Repos) of
+		[] -> hd(Repos);
+		[R1|_] -> R1				
+	end;
 	
 search_sources_for_project(User, ProjectName) ->
 	case repos_info(User, ProjectName) of
-		#xmlElement{name=repository}=Repo ->
-			[Username] = xmerl_xpath:string("/repository/owner/text()", Repo),
-			[RepoName] = xmerl_xpath:string("/repository/name/text()", Repo),
-			{Username#xmlText.value, RepoName#xmlText.value};
+		#repository{}=Repo ->
+			Repo;
 		_ -> 
 			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
 	end.
@@ -469,16 +524,17 @@ gather_remote_deps(Packages) ->
    
 gather_remote_deps([], _, _, Dict) -> Dict;
 gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dict) ->
-    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
+    Repo = search_sources_for_project(User, ProjectName),
     Vsn = read_vsn_from_args(CommandLineTags),
+	Key = {Repo#repository.owner, Repo#repository.name, Vsn},
     
-    digraph:add_vertex(G, {GitUser, GitProjectName, Vsn}),
+    digraph:add_vertex(G, Key),
     
     case Parent of
         undefined -> ok;
         {_, ParentProjectName, _} ->
-            case digraph:add_edge(G, Parent, {GitUser, GitProjectName, Vsn}) of
-                {error, {bad_edge, _}} -> exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, GitProjectName])));
+            case digraph:add_edge(G, Parent, Key) of
+                {error, {bad_edge, _}} -> exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, Repo#repository.name])));
                 {error, Reason} -> exit(lists:flatten(io_lib:format("failed to traverse dependency tree: ~p", [Reason])));
                 _ -> ok
             end
@@ -488,11 +544,11 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
         fun({Dep, Args}, TempDict) -> 
             {DepName, DepUser} = split_package(Dep),
             DepVsn = read_vsn_from_args(Args),
-            TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, {GitUser, GitProjectName, Vsn}, TempDict),
+            TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, Key, TempDict),
             {{DepUser, DepName, DepVsn}, TempDict1} 
-        end, Dict, get_package_deps(GitUser, GitProjectName, Vsn)),
+        end, Dict, get_package_deps(Repo#repository.owner, Repo#repository.name, Vsn)),
     
-    Dict2 = dict:store({GitUser, GitProjectName, Vsn}, [{deps, Deps}], Dict1),
+    Dict2 = dict:store(Key, [{deps, Deps}], Dict1),
     gather_remote_deps(Tail, G, Parent, Dict2).
 
 %% -----------------------------------------------------------------------------
@@ -507,10 +563,94 @@ get_package_deps(User, ProjectName, Vsn) ->
     end.
     
 repos_search(ProjectName) ->
-	request_git_url("http://github.com/api/v2/xml/repos/search/" ++ ProjectName).
+	case request_git_url("http://github.com/api/v2/xml/repos/search/" ++ ProjectName) of
+		#xmlElement{name=repositories, content=Repos} ->
+			lists:reverse(lists:foldl(
+				fun (#xmlElement{name=repository}=Repo, Acc) ->
+						case {xmerl_xpath:string("/repository/name/text()", Repo),
+							  xmerl_xpath:string("/repository/language/text()", Repo),
+							  xmerl_xpath:string("/repository/type/text()", Repo)} of
+							{[Name], [Lang], [Type]} ->
+								if 
+									Name#xmlText.value == ProjectName andalso
+									Lang#xmlText.value == "Erlang" andalso
+									Type#xmlText.value == "repo" ->
+										Username = 
+											case xmerl_xpath:string("/repository/username/text()", Repo) of
+												[#xmlText{value=Username0}] -> Username0;
+												_ -> undefined
+											end,
+										Desc = 
+											case xmerl_xpath:string("/repository/description/text()", Repo) of
+												[#xmlText{value=Desc0}] -> Desc0;
+												_ -> undefined
+											end,
+										Homepage = 
+											case xmerl_xpath:string("/repository/homepage/text()", Repo) of
+												[#xmlText{value=Homepage0}] -> Homepage0;
+												_ -> undefined
+											end,
+										Followers = 
+											case xmerl_xpath:string("/repository/followers/text()", Repo) of
+												[#xmlText{value=Followers0}] -> Followers0;
+												_ -> undefined
+											end,
+										[#repository{
+											name = Name#xmlText.value,
+											owner = Username,
+											description = Desc,
+											homepage = Homepage,
+											followers = Followers
+										}|Acc];
+									true ->
+										Acc
+								end;
+							_ ->
+								Acc
+						end;
+					(_, Acc) -> Acc
+			end, [], Repos));
+		_ -> []
+	end.
 	
 repos_info(User, ProjectName) ->
-	request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName).
+	case request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName) of
+		#xmlElement{name=repository}=Repo ->
+			case xmerl_xpath:string("/repository/name/text()", Repo) of
+				[Name] ->					
+					Username = 
+						case xmerl_xpath:string("/repository/owner/text()", Repo) of
+							[#xmlText{value=Username0}] -> Username0;
+							_ -> undefined
+						end,
+					Desc = 
+						case xmerl_xpath:string("/repository/description/text()", Repo) of
+							[#xmlText{value=Desc0}] -> Desc0;
+							_ -> undefined
+						end,
+					Homepage = 
+						case xmerl_xpath:string("/repository/homepage/text()", Repo) of
+							[#xmlText{value=Homepage0}] -> Homepage0;
+							_ -> undefined
+						end,
+					Followers = 
+						case xmerl_xpath:string("/repository/followers/text()", Repo) of
+							[#xmlText{value=Followers0}] -> Followers0;
+							_ -> undefined
+						end,
+					#repository{
+						name = Name#xmlText.value,
+						owner = Username,
+						description = Desc,
+						homepage = Homepage,
+						followers = Followers
+					};
+				_ ->
+					undefined
+			end;
+		_ ->
+			undefined
+	end.
 	
 request_git_url(Url) ->
     {ok, {{_, _RespCode, _}, _Headers, Body}} = 
@@ -519,9 +659,9 @@ request_git_url(Url) ->
 	XmlElement.
 
 download_package(User, ProjectName, Vsn) ->
-    {GitUser, GitProjectName} = search_sources_for_project(User, ProjectName),
-    LocalProjectDir = GitUser ++ "-" ++ GitProjectName,
-    Url = download_url(GitUser, GitProjectName, Vsn),
+    Repo = search_sources_for_project(User, ProjectName),
+    LocalProjectDir = Repo#repository.owner ++ "-" ++ Repo#repository.name,
+    Url = download_url(Repo#repository.owner, Repo#repository.name, Vsn),
     io:format("+ downloading ~s~n", [Url]),
     case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
         {ok,{{_,200,_},_,Bin}} ->
@@ -540,7 +680,7 @@ download_package(User, ProjectName, Vsn) ->
                     exit(lists:flatten(io_lib:format("failed to extract ~s tarball: ~p", [ProjectName, Reason1])))
             end;
         {ok, {{_,404,_},_,_}} ->
-            exit(lists:flatten(io_lib:format("remote project does not exist: ~s/~s/~s", [GitUser, GitProjectName, Vsn])));
+            exit(lists:flatten(io_lib:format("remote project does not exist: ~s/~s/~s", [Repo#repository.owner, Repo#repository.name, Vsn])));
         Error ->
             io:format("~p~n", [Error]),
             exit(lists:flatten(io_lib:format("failed to download ~s tarball", [ProjectName])))
