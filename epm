@@ -123,7 +123,7 @@ execute(_GlobalConfig, ["info" | Args]) ->
 						0 -> ok;
 						_ -> io:format("~n")
 					end,
-					package_info(User, ProjectName, Vsn, InstallDir, Deps),
+					installed_package_info(User, ProjectName, Vsn, InstallDir, Deps),
 					Count+1
 				end, 0, lists:reverse(Installed))
 	end,
@@ -135,12 +135,7 @@ execute(_GlobalConfig, ["info" | Args]) ->
 				[] -> ok;
 				_ -> io:format("~n")
 			end,
-			io:format("===============================~n"),
-			io:format("AVAILABLE~n"),
-			io:format("===============================~n"),
-			
-			[package_info(User, ProjectName, Vsn) || 
-				{User, ProjectName, Vsn} <- lists:reverse(NotInstalled)]
+			not_installed_package_info(NotInstalled)
 	end;
         
 	
@@ -290,7 +285,7 @@ local_package_info(User, ProjectName, Vsn) ->
     end.
 
 % INSTALLED
-package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
+installed_package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
 	Repo = repos_info(User, ProjectName),
     [io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
 		{"name", ProjectName},
@@ -311,39 +306,64 @@ package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
     end.
     
 %% NOT INSTALLED
-package_info(User, ProjectName, _Vsn) ->
-	Repos = 
-		case User of
-			none -> repos_search(ProjectName);
-			_ -> 
-				case repos_info(User, ProjectName) of
-					undefined -> [];
-					R -> [R]
-				end
-		end,
-	case Repos of
-		[] -> ok;
-		_ ->
-			lists:foldl(
-				fun(Repo, Count) ->
-					%Tags = repos_tags(Repo#repository.owner, ProjectName),
-					%Branches = repos_branches(Repo#repository.owner, ProjectName),
-					case Count of
-						0 -> ok;
-						_ -> io:format("~n")
-					end,
-					[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
-						{"name", ProjectName},
-						{"owner", Repo#repository.owner},
-						{"followers", Repo#repository.followers},
-						{"homepage", Repo#repository.homepage},
-						{"description", Repo#repository.description}
-						%{"tags", string:join([atom_to_list(Tag) || {Tag, _Sha} <- Tags], ", ")},
-						%{"branches", string:join([atom_to_list(Branch) || {Branch, _Sha} <- Branches], ", ")}
-					]],
-					Count+1
-				end, 0, Repos)
-	end.
+not_installed_package_info(Packages) ->
+    case not_installed_package_info(Packages, []) of
+        [] -> 
+            io:format("- not found~n");
+        Results ->
+            io:format("===============================~n"),
+        	io:format("AVAILABLE~n"),
+        	io:format("===============================~n"),
+        	[not_installed_package_info(User, ProjectName, Vsn, Repos) || {{User, ProjectName, Vsn}, Repos} <- Results]
+    end.
+
+not_installed_package_info([], Acc) -> Acc;
+not_installed_package_info([{User, ProjectName, Vsn}|Tail], Acc) ->
+    Acc1 = 
+        case User of
+    		none -> 
+    		    case repos_search(ProjectName) of
+    		        [] -> Acc;
+    		        Repos -> [{{User, ProjectName, Vsn}, Repos}|Acc]
+    		    end;
+    		_ -> 
+    			case repos_info(User, ProjectName) of
+    				undefined -> Acc;
+    				R -> [{{User, ProjectName, Vsn}, [R]}|Acc]
+    			end
+    	end,
+    not_installed_package_info(Tail, Acc1).
+    
+not_installed_package_info(_User, ProjectName, _Vsn, Repos) ->
+	lists:foldl(
+		fun(Repo, Count) ->
+			Tags = repos_tags(Repo#repository.owner, ProjectName),
+			Branches = repos_branches(Repo#repository.owner, ProjectName),
+			case Count of
+				0 -> ok;
+				_ -> io:format("~n")
+			end,
+			[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
+				{"name", ProjectName},
+				{"owner", Repo#repository.owner},
+				{"followers", Repo#repository.followers},
+				{"homepage", Repo#repository.homepage},
+				{"description", Repo#repository.description}
+			]],
+			if 
+			    Tags =/= [] -> 
+			        io:format("  tags:~n"),
+			        [io:format("    ~s~n", [K]) || {K,_V} <- Tags];
+			    true -> ok
+			end,
+			if 
+			    Branches =/= [] -> 
+		            io:format("  branches:~n"),
+		            [io:format("    ~s~n", [K]) || {K,_V} <- Branches];
+			    true -> ok 
+			end,
+			Count+1
+		end, 0, Repos).
 
 %% -----------------------------------------------------------------------------
 %% INSTALL
@@ -655,22 +675,28 @@ repos_info(User, ProjectName) ->
 		_ ->
 			undefined
 	end.
-	
+
 repos_tags(User, ProjectName) ->
-	case request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags") of
-		#xmlElement{name=tags, content=Tags} ->
-			[begin
-				{Tag, Sha}
-			 end || #xmlElement{name=Tag, content=[#xmlText{value=Sha}]} <- Tags];
+    Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags",
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
+        {ok, {{_, 200, _}, _, "--- \ntags: {}\n\n"}} -> [];
+        {ok, {{_, 200, _}, _, "--- \ntags: \n" ++ Body}} -> 
+            [begin
+                [K,V] = string:tokens(Token, ":"),
+                {string:strip(K), string:strip(V)} 
+             end || Token <- string:tokens(Body, "\n")];
 		_ -> []
 	end.
 	
 repos_branches(User, ProjectName) ->
-	case request_git_url("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches") of
-		#xmlElement{name=branches, content=Branches} ->
-			[begin
-				{Branch, Sha}
-			 end || #xmlElement{name=Branch, content=[#xmlText{value=Sha}]} <- Branches];
+    Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches",
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
+        {ok, {{_, 200, _}, _, "--- \nbranches: {}\n\n"}} -> [];
+        {ok, {{_, 200, _}, _, "--- \nbranches: \n" ++ Body}} -> 
+            [begin
+                [K,V] = string:tokens(Token, ":"),
+                {string:strip(K), string:strip(V)} 
+             end || Token <- string:tokens(Body, "\n")];
 		_ -> []
 	end.
 		
