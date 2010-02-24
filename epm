@@ -105,9 +105,9 @@ execute(_GlobalConfig, ["info" | Args]) ->
 execute(_, _) ->
     io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n"),
     io:format("Usage: epm command arguments~n"),
-    io:format("    install [<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--force] [--verbose]~n"),
-    io:format("    remove <project> [--verbose]~n"),
-    io:format("    info <project> [--verbose]~n"),
+    io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
+    io:format("    remove [<project>,] [--verbose]~n"),
+    io:format("    info [<project>,] [--verbose]~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
