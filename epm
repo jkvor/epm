@@ -139,14 +139,34 @@ execute(_GlobalConfig, ["info" | Args]) ->
 	end;
         
 	
-execute(_GlobalConfig, ["list" | _Args]) ->
-	ok;
+execute(_GlobalConfig, ["list" | Args]) ->
+    {Packages, Flags} = collect_args(list, Args),
+	put(verbose, lists:member(verbose, Flags)),
+    Installed = installed_packages(),
+    case Installed of
+		[] -> ok;
+		_ ->
+			io:format("===============================~n"),
+			io:format("INSTALLED~n"),
+			io:format("===============================~n"),
+
+			lists:foldl(
+				fun({User, ProjectName, Vsn, InstallDir, Deps}, Count) ->
+					case Count of
+						0 -> ok;
+						_ -> io:format("~n")
+					end,
+					installed_package_info(User, ProjectName, Vsn, InstallDir, Deps),
+					Count+1
+				end, 0, lists:reverse(Installed))
+	end;
 	
 execute(_, _) ->
     io:format("Usage: epm command arguments~n"),
     io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
     io:format("    remove [<project>,] [--verbose]~n"),
     io:format("    info [<project>,] [--verbose]~n"),
+    io:format("    list [--verbose]~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -259,6 +279,11 @@ installed_app_vsn(App) ->
         _ -> undefined
     end.
 
+installed_packages() ->
+    [begin
+        {User, ProjectName, Vsn, InstallDir, Deps}
+     end || [{{User,ProjectName,Vsn},InstallDir,Deps}] <- dets:match(epm_index, '$1')].
+    
 local_package_info(none, ProjectName, undefined) ->
     case dets:match(epm_index, {{'$1',ProjectName,'$2'},'$3','$4'}) of
         [] -> undefined;
@@ -286,7 +311,11 @@ local_package_info(User, ProjectName, Vsn) ->
 
 % INSTALLED
 installed_package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
-	Repo = repos_info(User, ProjectName),
+	Repo = 
+	    case repos_info(User, ProjectName) of
+	        error -> exit(lists:flatten(io_lib:format("failed to fetch remote repo info for ~s", [ProjectName])));
+	        R0 -> R0
+	    end,
     [io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
 		{"name", ProjectName},
 		{"owner", User},
@@ -324,12 +353,13 @@ not_installed_package_info([{User, ProjectName, Vsn}|Tail], Acc) ->
     		none -> 
     		    case repos_search(ProjectName) of
     		        [] -> Acc;
+    		        error -> Acc;
     		        Repos -> [{{User, ProjectName, Vsn}, Repos}|Acc]
     		    end;
     		_ -> 
     			case repos_info(User, ProjectName) of
-    				undefined -> Acc;
-    				R -> [{{User, ProjectName, Vsn}, [R]}|Acc]
+    				#repository{}=R -> [{{User, ProjectName, Vsn}, [R]}|Acc];
+    				_ -> Acc
     			end
     	end,
     not_installed_package_info(Tail, Acc1).
@@ -409,12 +439,15 @@ read_vsn_from_args([_|Tail], Default) -> read_vsn_from_args(Tail, Default);
 read_vsn_from_args([], Default) -> Default.
 
 search_sources_for_project(none, ProjectName) ->	
-	Repos = repos_search(ProjectName),
-	if
-		Repos == [] ->
-			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
-		true -> ok
-	end,
+	Repos = 
+	    case repos_search(ProjectName) of
+	        error ->
+	            exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
+	        [] ->
+	            exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
+	        R0 ->
+	            R0
+	    end,
 	case lists:filter(fun(#repository{owner="epm"}) -> true; (_) -> false end, Repos) of
 		[] -> hd(Repos);
 		[R1|_] -> R1				
@@ -634,7 +667,8 @@ repos_search(ProjectName) ->
 						end;
 					(_, Acc) -> Acc
 			end, [], Repos));
-		_ -> []
+		not_found -> [];
+		_ -> error
 	end.
 	
 repos_info(User, ProjectName) ->
@@ -672,8 +706,9 @@ repos_info(User, ProjectName) ->
 				_ ->
 					undefined
 			end;
+		not_found -> undefined;
 		_ ->
-			undefined
+			error
 	end.
 
 repos_tags(User, ProjectName) ->
@@ -701,10 +736,15 @@ repos_branches(User, ProjectName) ->
 	end.
 		
 request_git_url(Url) ->
-    {ok, {{_, _RespCode, _}, _Headers, Body}} = 
-		http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []),
-	{XmlElement, _} = xmerl_scan:string(Body),
-	XmlElement.
+    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
+        {ok, {{_, 200, _}, _, Body}} ->
+	        {XmlElement, _} = xmerl_scan:string(Body),
+	        XmlElement;
+	    {ok, {{_, 404, _}, _, _}} ->
+	        not_found;
+	    _ ->
+	        error
+	end.
 
 download_package(User, ProjectName, Vsn) ->
     Repo = search_sources_for_project(User, ProjectName),

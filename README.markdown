@@ -11,11 +11,14 @@
 __Install__
 	epm install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 
+__Remove__ a given project  
+	epm remove [<project>,] [--verbose]
+
 __Info__
 	epm info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 
-__Remove__ a given project  
-	epm remove [<project>,] [--verbose]
+__List__
+	epm list [--verbose]
 
 ### Global epm config values (optional)
 
