@@ -29,7 +29,7 @@ __List__
 ~/.epm
 	[
 		{build_path, "/tmp"},
-		{install_path, "/usr/local/lib"},
+		{install_path, "/Users/jvorreuter/dev"},
 		{exclude, ["mochiweb"]}
 	].
 

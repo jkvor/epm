@@ -9,7 +9,7 @@
 %% main function
 %% -----------------------------------------------------------------------------
 main(Args) ->
-	io:format("epm v0.0.1, 2010 Nick Gerakines, Jacob Vorreuter~n~n"),
+	io:format("epm v0.1.0, 2010~n~n"),
 	case (catch main1(Args)) of
 		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
 			io:format("- ~s~n", [ErrorMsg]);
@@ -38,6 +38,10 @@ main1(Args) ->
 		end,
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 		{ok, [GlobalConfig], _} ->
+		    case proplists:get_value(install_path, GlobalConfig) of
+		        undefined -> ok;
+		        InstallDir -> add_to_path(InstallDir)
+		    end,
 			execute(GlobalConfig, Args);
 		{error, enoent} ->
 			execute([], Args);
@@ -429,8 +433,6 @@ not_installed_package_info(_User, ProjectName, _Vsn, Repos) ->
 %% INSTALL
 %% -----------------------------------------------------------------------------
 install_package(GlobalConfig, User, ProjectName, Vsn, Deps) ->
-	io:format("+ install package ~s~n", [ProjectName]),
-	
 	%% switch to build home dir
 	set_cwd_build_home(GlobalConfig),
 	
@@ -572,9 +574,41 @@ install(ProjectName, _Config, LibDir) ->
 	io:format("+ running ~s install command~n", [ProjectName]),
 	print_cmd_output("~s~n", [InstallCmd]),
 	do_cmd(InstallCmd, fail),
-	code:add_pathz(Dir),
+	Ebin = Dir ++ "/ebin",
+	case code:add_pathz(Ebin) of
+	    true ->
+	        ok;
+	    Err ->
+	        exit(lists:flatten(io_lib:format("failed to add path for ~s (~s): ~p", [ProjectName, Ebin, Err])))
+	end,
 	Dir.
     
+add_to_path(InstallDir) ->
+	case file:list_dir(InstallDir) of
+		{ok, Files} ->
+		    [begin
+		        File = filename:join([InstallDir, File0]),
+		        case filelib:is_dir(File) of
+		            true ->
+		                Ebin = filename:join([File, "ebin"]),
+		                case filelib:wildcard(Ebin ++ "/*.app") of
+		                    [App|_] ->
+		                        case file:consult(App) of
+		                            {ok, _} ->
+		                                code:add_pathz(Ebin);
+		                            _ ->
+		                                ok
+		                        end;
+		                    _ ->
+		                        ok
+		                end;
+		            false -> ok
+		        end
+		     end || File0 <- Files];
+		_ ->
+		    ok
+	end.
+	    
 del_dir(Dir) ->
 	case file:list_dir(Dir) of
 		{ok, Files} ->
@@ -801,7 +835,8 @@ request_git_url(Url) ->
 	        XmlElement;
 	    {ok, {{_, 404, _}, _, _}} ->
 	        not_found;
-	    _ ->
+	    Err ->
+	        io:format("timeout? ~p~n", [Err]),
 	        error
 	end.
 
