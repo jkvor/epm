@@ -72,7 +72,7 @@ execute(GlobalConfig, ["install" | Args]) ->
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
-                    [install_package(GlobalConfig, U, N, V, Props) || {{U,N,V},Props} <- NotInstalled];
+                    [install_package(GlobalConfig, U, N, V, proplists:get_value(deps, Props)) || {{U,N,V},Props} <- NotInstalled];
                 _ -> ok
             end
 	end;
@@ -80,7 +80,7 @@ execute(GlobalConfig, ["install" | Args]) ->
 execute(GlobalConfig, ["remove" | Args]) ->
 	{Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	Installed = dict:to_list(gather_local_deps(Packages)),
+	Installed = dict:to_list(gather_local_deps(Packages, true)),
 	case Installed of
 	    [] ->
 	        io:format("+ nothing to remove: no packages installed~n");
@@ -92,11 +92,31 @@ execute(GlobalConfig, ["remove" | Args]) ->
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
-                    [remove_package(GlobalConfig, U, N, V, InstallDir) || {{U,N,V},InstallDir} <- Installed];
+                    [remove_package(GlobalConfig, U, N, V, InstallDir) || {{U,N,V},{InstallDir,_Deps}} <- Installed];
                 _ -> ok
             end
     end;
-
+    
+execute(GlobalConfig, ["update" | Args]) ->
+    {Packages, Flags} = collect_args(update, Args),
+    put(verbose, lists:member(verbose, Flags)),
+    Installed = dict:to_list(gather_local_deps(Packages, lists:member(with_deps, Flags))),
+    case Installed of
+		[] ->
+		    io:format("- nothing to update~n");
+		_ ->
+			io:format("===============================~n"),
+			io:format("Update the following packages?~n"),
+			io:format("===============================~n"),
+			[io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- Installed],
+            io:format("[y/n] "),
+            case io:get_chars("", 1) of
+                "y" -> 
+                    [update_package(GlobalConfig, U, N, V, InstallDir, Deps) || {{U,N,V},{InstallDir,Deps}} <- Installed];
+                _ -> ok
+            end
+	end;
+	
 execute(_GlobalConfig, ["info" | Args]) ->
 	{Packages, Flags} = collect_args(info, Args),
 	put(verbose, lists:member(verbose, Flags)),
@@ -140,11 +160,12 @@ execute(_GlobalConfig, ["info" | Args]) ->
         
 	
 execute(_GlobalConfig, ["list" | Args]) ->
-    {Packages, Flags} = collect_args(list, Args),
+    {_Packages, Flags} = collect_args(list, Args),
 	put(verbose, lists:member(verbose, Flags)),
     Installed = installed_packages(),
     case Installed of
-		[] -> ok;
+		[] -> 
+		    io:format("- no packages installed~n");
 		_ ->
 			io:format("===============================~n"),
 			io:format("INSTALLED~n"),
@@ -165,6 +186,7 @@ execute(_, _) ->
     io:format("Usage: epm command arguments~n"),
     io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
     io:format("    remove [<project>,] [--verbose]~n"),
+    io:format("    update [<project>,] [--with-deps]~n"),
     io:format("    info [<project>,] [--verbose]~n"),
     io:format("    list [--verbose]~n"),
     ok.
@@ -205,6 +227,8 @@ parse_tag(info, "--tag") -> {tag, true};
 parse_tag(info, "--branch") -> {branch, true};
 parse_tag(info, "--sha") -> {sha, true};
 
+parse_tag(update, "--with-deps") -> with_deps;
+
 parse_tag(_, "--verbose") -> verbose;
 
 parse_tag(_, _) -> undefined.
@@ -217,17 +241,17 @@ split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
 %% -----------------------------------------------------------------------------
 %% package info
 %% -----------------------------------------------------------------------------	
-gather_local_deps(Packages) ->
-    gather_local_deps(Packages, dict:new()).
+gather_local_deps(Packages, FollowDeps) ->
+    gather_local_deps(Packages, dict:new(), FollowDeps).
     
-gather_local_deps([], Dict) ->
+gather_local_deps([], Dict, _FollowDeps) ->
     Dict;
     
-gather_local_deps([{{User, ProjectName}, CommandLineTags}|Tail], Dict) ->
+gather_local_deps([{{User, ProjectName}, CommandLineTags}|Tail], Dict, FollowDeps) ->
     Vsn = read_vsn_from_args(CommandLineTags),
-    gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict);
+    gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict, FollowDeps);
     
-gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict) ->
+gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict, FollowDeps) ->
     Match = 
         case User of
             none -> {{'$1',ProjectName,Vsn},'$2','$3'};
@@ -240,20 +264,26 @@ gather_local_deps([{User, ProjectName, Vsn}|Tail], Dict) ->
             [[GitUser,InstallDir,Deps]] -> [GitUser,Vsn,InstallDir,Deps];
             _ -> undefined
         end,
-    
+
     Dict1 = 
         case Lookup of
             undefined ->
                 Dict;
             [User1, Vsn1, InstallDir1, Deps1] ->
-                TempDict1 = lists:foldl(
-                    fun({DepUser, DepName, DepVsn}, TempDict) ->
-                        gather_local_deps([{DepUser, DepName, DepVsn}], TempDict)
-                    end, Dict, Deps1),
-                dict:store({User1, ProjectName, Vsn1}, InstallDir1, TempDict1)
+                TempDict1 = 
+                    case FollowDeps of
+                        true ->
+                            lists:foldl(
+                                fun({DepUser, DepName, DepVsn}, TempDict) ->
+                                    gather_local_deps([{DepUser, DepName, DepVsn}], TempDict, FollowDeps)
+                                end, Dict, Deps1);
+                        false ->
+                            Dict
+                    end,
+                dict:store({User1, ProjectName, Vsn1}, {InstallDir1, Deps1}, TempDict1)
         end,
     
-    gather_local_deps(Tail, Dict1).
+    gather_local_deps(Tail, Dict1, FollowDeps).
     
 filter_installed_deps(Apps) ->
     filter_installed_deps(Apps, [], []).
@@ -398,7 +428,7 @@ not_installed_package_info(_User, ProjectName, _Vsn, Repos) ->
 %% -----------------------------------------------------------------------------
 %% INSTALL
 %% -----------------------------------------------------------------------------
-install_package(GlobalConfig, User, ProjectName, Vsn, Props) ->
+install_package(GlobalConfig, User, ProjectName, Vsn, Deps) ->
 	io:format("+ install package ~s~n", [ProjectName]),
 	
 	%% switch to build home dir
@@ -418,17 +448,41 @@ install_package(GlobalConfig, User, ProjectName, Vsn, Props) ->
 	set_cwd_build_home(GlobalConfig),
 	del_dir(LocalProjectDir),
 	
-	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir, proplists:get_value(deps, Props)}),
+	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir, Deps}),
 	
 	ok.
 
+%% -----------------------------------------------------------------------------
+%% REMOVE
+%% -----------------------------------------------------------------------------
 remove_package(_GlobalConfig, User, ProjectName, Vsn, InstallDir) ->
-    io:format("+ removing package ~s/~s/~s from ~s~n", [User, ProjectName, Vsn, InstallDir]),
+    io:format("+ removing package ~s-~s-~s from ~s~n", [User, ProjectName, Vsn, InstallDir]),
     RemoveCmd = "rm -rf " ++ InstallDir,
     print_cmd_output("~s~n", [RemoveCmd]),
     do_cmd(RemoveCmd, fail),
     dets:delete(epm_index, {User,ProjectName,Vsn}).
-    
+
+%% -----------------------------------------------------------------------------
+%% UPDATE
+%% ----------------------------------------------------------------------------- 
+update_package(GlobalConfig, User, ProjectName, Vsn, _InstallDir, _Deps) ->
+    %% switch to build home dir
+	set_cwd_build_home(GlobalConfig),
+	
+	%% download correct version of package
+	LocalProjectDir = download_package(User, ProjectName, Vsn),
+	
+	%% switch to project dir
+	set_cwd_build_home(GlobalConfig),
+	set_cwd(LocalProjectDir),
+	
+	%% build/install project
+	_InstallDir = build_project(GlobalConfig, ProjectName),
+	
+	%% switch to build home dir and delete cloned project
+	set_cwd_build_home(GlobalConfig),
+	del_dir(LocalProjectDir).
+       
 read_vsn_from_args(Args) ->
     read_vsn_from_args(Args, "master").
     
@@ -502,19 +556,24 @@ install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
 
 install(ProjectName, _Config, LibDir) ->
-	case file:consult("ebin/" ++ ProjectName ++ ".app") of
-		{ok,[{application,_,Props}]} ->
-			Vsn = proplists:get_value(vsn, Props, "0.0"),
-			Dir = LibDir ++ "/" ++ ProjectName ++ "-" ++ Vsn,
-			InstallCmd = "mkdir -p " ++ Dir ++ "; cp -R ./* " ++ Dir,
-			io:format("+ running ~s install command~n", [ProjectName]),
-			print_cmd_output("~s~n", [InstallCmd]),
-			do_cmd(InstallCmd, fail),
-			code:add_pathz(Dir),
-			Dir;
-		_ ->
-			exit(lists:flatten(io_lib:format("failed to read ebin/~s.app", [ProjectName])))
-	end.
+	Vsn = 
+	    case file:consult("ebin/" ++ ProjectName ++ ".app") of
+    		{ok,[{application,_,Props}]} ->
+    			proplists:get_value(vsn, Props);
+    		_ ->
+    			undefined
+    	end,
+    Dir = 
+        case Vsn of
+            undefined -> LibDir ++ "/" ++ ProjectName;
+            _ -> LibDir ++ "/" ++ ProjectName ++ "-" ++ Vsn
+        end,
+	InstallCmd = "mkdir -p " ++ Dir ++ "; cp -R ./* " ++ Dir,
+	io:format("+ running ~s install command~n", [ProjectName]),
+	print_cmd_output("~s~n", [InstallCmd]),
+	do_cmd(InstallCmd, fail),
+	code:add_pathz(Dir),
+	Dir.
     
 del_dir(Dir) ->
 	case file:list_dir(Dir) of
