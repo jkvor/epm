@@ -6,7 +6,17 @@
 * a packaging and deployment tool
 * meant to handle non-Erlang dependencies
 
-### Global epm config file (optional)
+### Everything comes from GitHub
+
+epm installs apps from GitHub and nowhere else (perhaps other sources will be added in the future).
+
+### Sometimes GitHub sucks
+
+epm uses the GitHub API extensively. Often times requests to the API timeout or fail. This sucks, but what can you do?
+
+### Put an epm config file in your home directory (optional)
+
+this allows customization such as:
 
 * build_path -- where to download and build packages (default is current working dir)
 * install_path -- where to install (default is code:lib_dir())
@@ -95,7 +105,7 @@ get some info about that app you just installed
 	  owner: JacobVorreuter
 	  vsn: master
 	  install dir: /Users/jvorreuter/dev/excavator-0.3
-	  homepage: http://yummymeatwhiz.com
+	  homepage: 
 	  description: An Erlang application for ingesting data from various sources (APIs, data feeds, web content, etc)
 	  dependencies: 
 	    clones/mochiweb/master
@@ -116,7 +126,7 @@ how 'bout a list of all apps I've installed?
 	  owner: JacobVorreuter
 	  vsn: master
 	  install dir: /Users/jvorreuter/dev/excavator-0.3
-	  homepage: http://yummymeatwhiz.com
+	  homepage: 
 	  description: An Erlang application for ingesting data from various sources (APIs, data feeds, web content, etc)
 	  dependencies: 
 	    clones/mochiweb/master
@@ -129,7 +139,7 @@ how 'bout a list of all apps I've installed?
 	  owner: JacobVorreuter
 	  vsn: master
 	  install dir: /Users/jvorreuter/dev/mochixpath-0.1
-	  homepage: http://yummymeatwhiz.com
+	  homepage: 
 	  description: Mochiweb html parser xpath extension
 
 	  name: dynamic_compile
@@ -162,7 +172,7 @@ how 'bout a list of all apps I've installed?
 	  homepage: http://code.google.com/p/mochiweb/
 	  description: mochiweb clone
 
-what have I done? remove that terrible app and all its dependencies  
+what have I done? I must remove that terrible app and all of its dependencies  
 
 	jvorreuter$ ./epm remove excavator
 	epm v0.1.0, 2010
