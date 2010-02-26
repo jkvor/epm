@@ -14,7 +14,7 @@ epm installs apps from GitHub and nowhere else (perhaps other sources will be ad
 
 epm uses the GitHub API extensively. Often times requests to the API timeout or fail. This sucks, but what can you do?
 
-### Put an epm config file in your home directory (optional)
+### Put a .epm config file in your home directory (optional)
 
 this allows customization such as:
 
@@ -29,6 +29,21 @@ example ~/.epm file:
 		{install_path, "/Users/jvorreuter/dev"},
 		{exclude, ["mochiweb"]}
 	].
+	
+### How do apps specify their dependencies?
+	
+Each application in the epm dependency hierarchy may include an epm app config specifying its dependencies
+
+myapp/myapp.epm
+	[
+		{deps, [
+			{"clones/mochiweb", []},
+			{"jacobvorreuter/log_roller", [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
+			{"ngerakines/etap", [{tag, "0.3.4"}]}
+		]}
+	].
+	
+If this file is not present, it is assumed that the app has no dependencies
 	
 ### Usage
     install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
@@ -195,16 +210,3 @@ what have I done? I must remove that terrible app and all of its dependencies
 	+ removing package JacobVorreuter-mochixpath-master from /Users/jvorreuter/dev/mochixpath-0.1
 	+ removing package epm-etap-master from /Users/jvorreuter/dev/etap-0.3.4
 	
-### Application epm config
-
-Each application in the epm dependency hierarchy may include an epm app config specifying the following:
-* deps (optional) -- List of application dependancies
-
-myapp/myapp.epm
-	[
-		{deps, [
-			{"ngerakines/mochiweb", [{tag, "1.0"}]},
-			{"jacobvorreuter/log_roller", [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
-			{"ngerakines/etap", [{tag, "0.3.4"}]}
-		]}
-	].
