@@ -1,7 +1,7 @@
 	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]
-	remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]
+	remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],] [--verbose]
 	update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]
-	info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
+	info [[<user>/]<project>,] [--verbose]
 	list [--verbose]
 	search [<project>,]
 

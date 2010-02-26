@@ -87,7 +87,9 @@ execute(GlobalConfig, ["install" | Args]) ->
 execute(GlobalConfig, ["remove" | Args]) ->
 	{Packages, Flags} = collect_args(remove, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	Installed = dict:to_list(installed_packages(Packages, true)),
+	Installed0 = dict:to_list(installed_packages(Packages)),
+	DependantPackages = dependant_installed_packages(proplists:get_keys(Installed0)),
+    Installed = lists:usort(lists:append(Installed0, DependantPackages)),
 	case Installed of
 	    [] ->
 	        io:format("+ nothing to remove: no matching packages installed~n");
@@ -108,7 +110,7 @@ execute(GlobalConfig, ["remove" | Args]) ->
 execute(GlobalConfig, ["update" | Args]) ->
     {Packages, Flags} = collect_args(update, Args),
     put(verbose, lists:member(verbose, Flags)),
-    Installed = dict:to_list(installed_packages(Packages, lists:member(with_deps, Flags))),
+    Installed = dict:to_list(installed_packages(Packages)),
     case Installed of
 		[] ->
 		    io:format("- nothing to update~n");
@@ -199,9 +201,9 @@ execute(_GlobalConfig, ["list" | Args]) ->
 execute(_, _) ->
     io:format("Usage: epm command arguments~n"),
     io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]~n"),
-    io:format("    remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]~n"),
+    io:format("    remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],] [--verbose]~n"),
     io:format("    update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]~n"),
-    io:format("    info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
+    io:format("    info [[<user>/]<project>,] [--verbose]~n"),
     io:format("    list [--verbose]~n"),
     io:format("    search [<project>,]~n"),
     ok.
@@ -262,17 +264,18 @@ installed_packages() ->
         {User, ProjectName, Vsn, InstallDir, Deps}
      end || [{{User,ProjectName,Vsn},InstallDir,Deps}] <- dets:match(epm_index, '$1')].
         
-installed_packages(Packages, FollowDeps) ->
-    installed_packages(Packages, dict:new(), FollowDeps).
+installed_packages(Packages) ->
+    installed_packages(Packages, dict:new()).
     
-installed_packages([], Dict, _FollowDeps) ->
+installed_packages([], Dict) ->
     Dict;
     
-installed_packages([{{User, ProjectName}, CommandLineTags}|Tail], Dict, FollowDeps) ->
+installed_packages([{{User, ProjectName}, CommandLineTags}|Tail], Dict) ->
     Vsn = read_vsn_from_args(CommandLineTags),
-    installed_packages([{User, ProjectName, Vsn}|Tail], Dict, FollowDeps);
+    FollowDeps = lists:member(with_deps, CommandLineTags),
+    installed_packages([{User, ProjectName, Vsn, FollowDeps}|Tail], Dict);
     
-installed_packages([{User, ProjectName, Vsn}|Tail], Dict, FollowDeps) ->
+installed_packages([{User, ProjectName, Vsn, FollowDeps}|Tail], Dict) ->
     Dict1 = 
         case local_package_info(User, ProjectName, Vsn) of
             undefined ->
@@ -283,14 +286,35 @@ installed_packages([{User, ProjectName, Vsn}|Tail], Dict, FollowDeps) ->
                         true ->
                             lists:foldl(
                                 fun({DepUser, DepName, DepVsn}, TempDict) ->
-                                    installed_packages([{DepUser, DepName, DepVsn}], TempDict, FollowDeps)
+                                    installed_packages([{DepUser, DepName, DepVsn, FollowDeps}], TempDict)
                                 end, Dict, Deps1);
                         false ->
                             Dict
                     end,
                 dict:store({User1, ProjectName, Vsn1}, {InstallDir1, Deps1}, TempDict1)
         end,
-    installed_packages(Tail, Dict1, FollowDeps).
+    installed_packages(Tail, Dict1).
+    
+dependant_installed_packages(Packages) ->
+    dependant_installed_packages(Packages, []).
+    
+dependant_installed_packages([], Acc) -> Acc;
+dependant_installed_packages([Package|Tail], Acc) ->
+    Acc1 = dependant_installed_packages(Package, Acc, dets:match(epm_index, '$1')),
+    dependant_installed_packages(Tail, Acc1).
+
+dependant_installed_packages(_Package, Acc, []) -> Acc;
+dependant_installed_packages({User, Name, Vsn}, Acc, [[{Installed,InstallDir,Deps}]=Balls|Tail]) ->
+    Acc1 = case lists:filter(
+            fun({U,N,V}) ->
+                (U==User orelse U==none) andalso
+                (N==Name) andalso
+                (V==Vsn)
+            end, Deps) of
+        [] -> Acc;
+        [_] -> [{Installed,{InstallDir,Deps}}|Acc]
+    end,
+    dependant_installed_packages({User, Name, Vsn}, Acc1, Tail).
         
 installed_app_vsn(App) ->
     case dets:lookup(epm_index, App) of
