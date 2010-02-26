@@ -78,6 +78,7 @@ execute(GlobalConfig, ["install" | Args]) ->
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
+                    io:format("~n"),
                     [install_package(GlobalConfig, U, N, V, proplists:get_value(deps, Props)) || {{U,N,V},Props} <- NotInstalled];
                 _ -> ok
             end
@@ -98,6 +99,7 @@ execute(GlobalConfig, ["remove" | Args]) ->
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
+                    io:format("~n"),
                     [remove_package(GlobalConfig, U, N, V, InstallDir) || {{U,N,V},{InstallDir,_Deps}} <- Installed];
                 _ -> ok
             end
@@ -118,11 +120,17 @@ execute(GlobalConfig, ["update" | Args]) ->
             io:format("[y/n] "),
             case io:get_chars("", 1) of
                 "y" -> 
+                    io:format("~n"),
                     [update_package(GlobalConfig, U, N, V, InstallDir, Deps) || {{U,N,V},{InstallDir,Deps}} <- Installed];
                 _ -> ok
             end
 	end;
 	
+execute(_GlobalConfig, ["search" | Args]) ->
+    {Packages, Flags} = collect_args(search, Args),
+    put(verbose, lists:member(verbose, Flags)),
+    write_not_installed_package_info([{U,N,read_vsn_from_args(CommandLineArgs)} || {{U,N},CommandLineArgs} <- lists:reverse(Packages)]);
+    
 execute(_GlobalConfig, ["info" | Args]) ->
 	{Packages, Flags} = collect_args(info, Args),
 	put(verbose, lists:member(verbose, Flags)),
@@ -565,10 +573,12 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
     case Parent of
         undefined -> ok;
         {_, ParentProjectName, _} ->
-            case digraph:add_edge(G, Parent, Key) of
-                {error, {bad_edge, _}} -> exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, Repo#repository.name])));
-                {error, Reason} -> exit(lists:flatten(io_lib:format("failed to traverse dependency tree: ~p", [Reason])));
-                _ -> ok
+            digraph:add_edge(G, Parent, Key),
+            case digraph_utils:is_acyclic(G) of
+                true ->
+                    ok;
+                false ->
+                    exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, Repo#repository.name])))
             end
     end,
     
