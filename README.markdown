@@ -1,4 +1,3 @@
-### Usage
 	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 	remove [<project>,] [--verbose]
 	update [<project>,] [--with-deps]
