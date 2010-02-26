@@ -39,7 +39,7 @@ example ~/.epm file:
 	
 ### How do apps specify their dependencies?
 	
-Each application in the epm dependency hierarchy may include an epm app config specifying its dependencies
+Each application in the epm dependency hierarchy may include an epm app config specifying its dependencies and optionally overriding individual build commands
 
 look at this one: <http://github.com/JacobVorreuter/excavator/blob/master/excavator.epm>
 
@@ -49,10 +49,13 @@ myapp/myapp.epm
 			{"clones/mochiweb", []},
 			{"jacobvorreuter/log_roller", [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
 			{"ngerakines/etap", [{tag, "0.3.4"}]}
-		]}
+		]},
+		{prebuild_command, "./configure"},
+		{build_command, "make"},
+		{test_command, "make test"}
 	].
 	
-If this file is not present, it is assumed that the app has no dependencies
+If this file is not present, it is assumed that the app has no dependencies and should run the default build commands
 	
 ### Do it
 

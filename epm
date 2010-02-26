@@ -75,9 +75,9 @@ execute(GlobalConfig, ["install" | Args]) ->
 	        io:format("Install the following packages?~n"),
 	        io:format("===============================~n"),
             [io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- NotInstalled],
-            io:format("[y/n] "),
+            io:format("~n([y]/n) "),
             case io:get_chars("", 1) of
-                "y" -> 
+                C when C == "y"; C == "\n" -> 
                     io:format("~n"),
                     [install_package(GlobalConfig, U, N, V, proplists:get_value(deps, Props)) || {{U,N,V},Props} <- NotInstalled];
                 _ -> ok
@@ -96,9 +96,9 @@ execute(GlobalConfig, ["remove" | Args]) ->
 	        io:format("Remove the following packages?~n"),
 	        io:format("===============================~n"),
             [io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- Installed],
-            io:format("[y/n] "),
+            io:format("~n([y]/n) "),
             case io:get_chars("", 1) of
-                "y" -> 
+                C when C == "y"; C == "\n" -> 
                     io:format("~n"),
                     [remove_package(GlobalConfig, U, N, V, InstallDir) || {{U,N,V},{InstallDir,_Deps}} <- Installed];
                 _ -> ok
@@ -117,9 +117,9 @@ execute(GlobalConfig, ["update" | Args]) ->
 			io:format("Update the following packages?~n"),
 			io:format("===============================~n"),
 			[io:format("    + ~s-~s-~s~n", [U,N,V]) || {{U,N,V},_} <- Installed],
-            io:format("[y/n] "),
+            io:format("~n([y]/n) "),
             case io:get_chars("", 1) of
-                "y" -> 
+                C when C == "y"; C == "\n" -> 
                     io:format("~n"),
                     [update_package(GlobalConfig, U, N, V, InstallDir, Deps) || {{U,N,V},{InstallDir,Deps}} <- Installed];
                 _ -> ok
@@ -506,6 +506,7 @@ build_project(GlobalConfig, ProjectName) ->
     	end,
 	prebuild(ProjectName, Config),
 	build(ProjectName, Config),
+	test(ProjectName, Config),
 	install(ProjectName, Config, proplists:get_value(install_path, GlobalConfig)).
 
 prebuild(ProjectName, Config) ->
@@ -523,6 +524,15 @@ build(ProjectName, Config) ->
 	print_cmd_output("~s~n", [BuildCmd]),
 	do_cmd(BuildCmd, fail).
 
+test(ProjectName, Config) ->
+    case proplists:get_value(test_command, Config) of
+		undefined -> ok;
+		TestCmd -> 
+			io:format("+ running ~s test command~n", [ProjectName]),
+			print_cmd_output("~s~n", [TestCmd]),
+			do_cmd(TestCmd, fail)
+	end.
+	
 install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
 
