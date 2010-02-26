@@ -1,9 +1,9 @@
-	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
-	remove [<project>,] [--verbose]
-	update [<project>,] [--with-deps]
-	search [<project>,]
-	info [<project>,] [--verbose]
+	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]
+	remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]
+	update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]
+	info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
 	list [--verbose]
+	search [<project>,]
 
 ### epm _IS_
 * an Erlang package manager meant to have _minimal_ impact on projects
@@ -25,15 +25,15 @@ epm uses the GitHub API extensively. Often times requests to the API timeout or 
 
 this allows customization such as:
 
-* build_path -- where to download and build packages (default is current working dir)
-* install_path -- where to install (default is code:lib_dir())
+* build_dir -- where to download and build packages (default is current working dir)
+* install_dir -- where to install (default is code:lib_dir())
 * exclude -- list of apps to ignore dependencies for (default is [])
 
 example ~/.epm file:
 
 	[
-		{build_path, "/tmp"},
-		{install_path, "/Users/jvorreuter/dev"},
+		{build_dir, "/tmp"},
+		{install_dir, "/Users/jvorreuter/dev"},
 		{exclude, ["mochiweb"]}
 	].
 	

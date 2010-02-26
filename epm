@@ -40,7 +40,7 @@ main1(Args) ->
 		end,
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 		{ok, [GlobalConfig], _} ->
-		    case proplists:get_value(install_path, GlobalConfig) of
+		    case proplists:get_value(install_dir, GlobalConfig) of
 		        undefined -> ok;
 		        InstallDir -> add_to_path(InstallDir)
 		    end,
@@ -85,7 +85,7 @@ execute(GlobalConfig, ["install" | Args]) ->
 	end;
 
 execute(GlobalConfig, ["remove" | Args]) ->
-	{Packages, Flags} = collect_args(install, Args),
+	{Packages, Flags} = collect_args(remove, Args),
 	put(verbose, lists:member(verbose, Flags)),
 	Installed = dict:to_list(installed_packages(Packages, true)),
 	case Installed of
@@ -198,12 +198,12 @@ execute(_GlobalConfig, ["list" | Args]) ->
 	
 execute(_, _) ->
     io:format("Usage: epm command arguments~n"),
-    io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
-    io:format("    remove [<project>,] [--verbose]~n"),
-    io:format("    update [<project>,] [--with-deps]~n"),
-    io:format("    search [<project>,]~n"),
-    io:format("    info [<project>,] [--verbose]~n"),
+    io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]~n"),
+    io:format("    remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]~n"),
+    io:format("    update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]~n"),
+    io:format("    info [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
     io:format("    list [--verbose]~n"),
+    io:format("    search [<project>,]~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -242,7 +242,8 @@ parse_tag(info, "--tag") -> {tag, true};
 parse_tag(info, "--branch") -> {branch, true};
 parse_tag(info, "--sha") -> {sha, true};
 
-parse_tag(update, "--with-deps") -> with_deps;
+parse_tag(_, "--with-deps") -> {with_deps, false};
+parse_tag(_, "--without-deps") -> {without_deps, false};
 
 parse_tag(_, "--verbose") -> verbose;
 
@@ -507,7 +508,7 @@ build_project(GlobalConfig, ProjectName) ->
 	prebuild(ProjectName, Config),
 	build(ProjectName, Config),
 	test(ProjectName, Config),
-	install(ProjectName, Config, proplists:get_value(install_path, GlobalConfig)).
+	install(ProjectName, Config, proplists:get_value(install_dir, GlobalConfig)).
 
 prebuild(ProjectName, Config) ->
     case proplists:get_value(prebuild_command, Config) of
@@ -577,6 +578,7 @@ gather_remote_deps([], _, _, Dict) -> Dict;
 gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dict) ->
     Repo = retrieve_remote_repo(User, ProjectName),
     Vsn = read_vsn_from_args(CommandLineTags),
+    WithoutDeps = lists:member(without_deps, CommandLineTags),
 	Key = {Repo#repository.owner, Repo#repository.name, Vsn},
     
     digraph:add_vertex(G, Key),
@@ -593,13 +595,19 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
             end
     end,
     
-    {Deps, Dict1} = lists:mapfoldl(
-        fun({Dep, Args}, TempDict) -> 
-            {DepName, DepUser} = split_package(Dep),
-            DepVsn = read_vsn_from_args(Args),
-            TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, Key, TempDict),
-            {{DepUser, DepName, DepVsn}, TempDict1} 
-        end, Dict, get_package_deps(Repo#repository.owner, Repo#repository.name, Vsn)),
+    {Deps, Dict1} = 
+        case WithoutDeps of
+            true ->
+                {[], Dict};
+            false ->
+                lists:mapfoldl(
+                    fun({Dep, Args}, TempDict) -> 
+                        {DepName, DepUser} = split_package(Dep),
+                        DepVsn = read_vsn_from_args(Args),
+                        TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, Key, TempDict),
+                        {{DepUser, DepName, DepVsn}, TempDict1} 
+                    end, Dict, get_package_deps(Repo#repository.owner, Repo#repository.name, Vsn))
+        end,
     
     Dict2 = dict:store(Key, [{deps, Deps}], Dict1),
     gather_remote_deps(Tail, G, Parent, Dict2).
@@ -863,7 +871,7 @@ print_cmd_output(Format, Args, true) ->
 	io:format(string:substr(Output, 1, length(Output)-4), []).
 
 set_cwd_build_home(GlobalConfig) ->	
-	set_cwd(proplists:get_value(build_path, GlobalConfig, ".")).
+	set_cwd(proplists:get_value(build_dir, GlobalConfig, ".")).
 	
 set_cwd(Dir) ->
 	case file:set_cwd(Dir) of
