@@ -201,6 +201,7 @@ execute(_, _) ->
     io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]~n"),
     io:format("    remove [<project>,] [--verbose]~n"),
     io:format("    update [<project>,] [--with-deps]~n"),
+    io:format("    search [<project>,]~n"),
     io:format("    info [<project>,] [--verbose]~n"),
     io:format("    list [--verbose]~n"),
     ok.

@@ -1,3 +1,11 @@
+### Usage
+	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
+	remove [<project>,] [--verbose]
+	update [<project>,] [--with-deps]
+	search [<project>,]
+	info [<project>,] [--verbose]
+	list [--verbose]
+
 ### epm _IS_
 * an Erlang package manager meant to have _minimal_ impact on projects
 * a simple and easy dependency tracker
@@ -47,13 +55,6 @@ myapp/myapp.epm
 	
 If this file is not present, it is assumed that the app has no dependencies
 	
-### Usage
-    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>],] [--verbose]
-    remove [<project>,] [--verbose]
-    update [<project>,] [--with-deps]
-    info [<project>,] [--verbose]
-    list [--verbose]
-
 ### Do it
 
 search for an Erlang app  
