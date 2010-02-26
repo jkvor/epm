@@ -34,6 +34,8 @@ example ~/.epm file:
 	
 Each application in the epm dependency hierarchy may include an epm app config specifying its dependencies
 
+look at this one: <http://github.com/JacobVorreuter/excavator/blob/master/excavator.epm>
+
 myapp/myapp.epm
 	[
 		{deps, [
