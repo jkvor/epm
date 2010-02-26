@@ -7,7 +7,7 @@
 
 ### Read the blog post
 
-http://www.jkvor.com/erlang-package-manager
+<http://www.jkvor.com/erlang-package-manager>
 
 ### epm _IS_
 * an Erlang package manager meant to have _minimal_ impact on projects
