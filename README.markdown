@@ -13,50 +13,6 @@
 * a packaging and deployment tool
 * meant to handle non-Erlang dependencies
 
-### Everything comes from GitHub
-
-epm installs apps from GitHub and nowhere else (perhaps other sources will be added in the future).
-
-### Sometimes GitHub sucks
-
-epm uses the GitHub API extensively. Often times requests to the API timeout or fail. This sucks, but what can you do?
-
-### Put a .epm config file in your home directory (optional)
-
-this allows customization such as:
-
-* build_dir -- where to download and build packages (default is current working dir)
-* install_dir -- where to install (default is code:lib_dir())
-* exclude -- list of apps to ignore dependencies for (default is [])
-
-example ~/.epm file:
-
-	[
-		{build_dir, "/tmp"},
-		{install_dir, "/Users/jvorreuter/dev"},
-		{exclude, ["mochiweb"]}
-	].
-	
-### How do apps specify their dependencies?
-	
-Each application in the epm dependency hierarchy may include an epm app config specifying its dependencies and optionally overriding individual build commands
-
-look at this one: <http://github.com/JacobVorreuter/excavator/blob/master/excavator.epm>
-
-myapp/myapp.epm
-	[
-		{deps, [
-			{"clones/mochiweb", []},
-			{"jacobvorreuter/log_roller", [{sha, "da5a7738c913383cbd06ca3a0139e6eaab03030f"}]},
-			{"ngerakines/etap", [{tag, "0.3.4"}]}
-		]},
-		{prebuild_command, "./configure"},
-		{build_command, "make"},
-		{test_command, "make test"}
-	].
-	
-If this file is not present, it is assumed that the app has no dependencies and should run the default build commands
-	
 ### Do it
 
 search for an Erlang app  
