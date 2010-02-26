@@ -304,7 +304,7 @@ dependant_installed_packages([Package|Tail], Acc) ->
     dependant_installed_packages(Tail, Acc1).
 
 dependant_installed_packages(_Package, Acc, []) -> Acc;
-dependant_installed_packages({User, Name, Vsn}, Acc, [[{Installed,InstallDir,Deps}]=Balls|Tail]) ->
+dependant_installed_packages({User, Name, Vsn}, Acc, [[{Installed,InstallDir,Deps}]|Tail]) ->
     Acc1 = case lists:filter(
             fun({U,N,V}) ->
                 (U==User orelse U==none) andalso
