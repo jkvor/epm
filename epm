@@ -26,6 +26,8 @@ main1(Args) ->
 	
 	case dets:open_file(epm_index, [{type, set}]) of
 	    {ok, _} -> ok;
+	    {error, {file_error,_,eacces}} ->
+            exit(lists:flatten(io_lib:format("insufficient access to epm index file.", [])));
 	    {error, Reason1} ->
 	        exit(lists:flatten(io_lib:format("failed to open epm index file: ~p", [Reason1])))
 	end,
@@ -87,7 +89,7 @@ execute(GlobalConfig, ["remove" | Args]) ->
 	Installed = dict:to_list(installed_packages(Packages, true)),
 	case Installed of
 	    [] ->
-	        io:format("+ nothing to remove: no packages installed~n");
+	        io:format("+ nothing to remove: no matching packages installed~n");
 	    _ ->
 	        io:format("===============================~n"),
 	        io:format("Remove the following packages?~n"),
