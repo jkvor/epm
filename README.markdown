@@ -38,7 +38,7 @@ search for an Erlang app
 	    master
 	    scheduler
 
-install that app (its dependencies will be installed too)  
+install that app that you wanted (its dependencies will be installed too)  
 
 	jvorreuter$ ./epm install excavator
 	epm v0.1.0, 2010
@@ -52,7 +52,8 @@ install that app (its dependencies will be installed too)
 	    + JacobVorreuter-dynamic_compile-master
 	    + JacobVorreuter-mochixpath-master
 	    + JacobVorreuter-excavator-master
-	[y/n] y
+
+	([y]/n) y
 
 	+ downloading http://github.com/clones/mochiweb/tarball/master
 	+ running mochiweb build command
@@ -119,7 +120,7 @@ how 'bout a list of all apps I've installed?
 	  owner: JacobVorreuter
 	  vsn: master
 	  install dir: /Users/jvorreuter/dev/mochixpath-0.1
-	  homepage: 
+	  homepage: http://yummymeatwhiz.com
 	  description: Mochiweb html parser xpath extension
 
 	  name: dynamic_compile
@@ -152,7 +153,7 @@ how 'bout a list of all apps I've installed?
 	  homepage: http://code.google.com/p/mochiweb/
 	  description: mochiweb clone
 
-what have I done? I must remove that terrible app and all of its dependencies  
+what have I done? I must remove that terrible app. Its dependencies can stay though
 
 	jvorreuter$ ./epm remove excavator
 	epm v0.1.0, 2010
@@ -160,18 +161,9 @@ what have I done? I must remove that terrible app and all of its dependencies
 	===============================
 	Remove the following packages?
 	===============================
-	    + clones-mochiweb-master
 	    + JacobVorreuter-excavator-master
-	    + JacobVorreuter-dynamic_compile-master
-	    + JacobVorreuter-mochiweb_server_behavior-master
-	    + JacobVorreuter-mochixpath-master
-	    + epm-etap-master
-	[y/n] y
 
-	+ removing package clones-mochiweb-master from /Users/jvorreuter/dev/mochiweb-0.01
+	([y]/n) y
+
 	+ removing package JacobVorreuter-excavator-master from /Users/jvorreuter/dev/excavator-0.3
-	+ removing package JacobVorreuter-dynamic_compile-master from /Users/jvorreuter/dev/dynamic_compile-0.1
-	+ removing package JacobVorreuter-mochiweb_server_behavior-master from /Users/jvorreuter/dev/mochiweb_server_behavior-0.1
-	+ removing package JacobVorreuter-mochixpath-master from /Users/jvorreuter/dev/mochixpath-0.1
-	+ removing package epm-etap-master from /Users/jvorreuter/dev/etap-0.3.4
 	
