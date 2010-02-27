@@ -140,10 +140,10 @@ execute(_GlobalConfig, ["info" | Args]) ->
 		fun({{User, ProjectName}, CommandLineTags}, {TempInstalled, TempNotInstalled}) ->
 			Vsn = read_vsn_from_args(CommandLineTags, undefined),
 	        case local_package_info(User, ProjectName, Vsn) of
-				undefined ->
+				[] ->
 					{TempInstalled, [{User, ProjectName, Vsn}|TempNotInstalled]};
-				{GitUser,_,GitVsn,InstallDir,Deps} ->
-					{[{GitUser,ProjectName,GitVsn,InstallDir,Deps}|TempInstalled], TempNotInstalled}
+				List ->
+					{lists:append(List, TempInstalled), TempNotInstalled}
 			end	
 		end, {[], []}, Packages),
 	case Installed of
@@ -278,20 +278,23 @@ installed_packages([{{User, ProjectName}, CommandLineTags}|Tail], Dict) ->
 installed_packages([{User, ProjectName, Vsn, FollowDeps}|Tail], Dict) ->
     Dict1 = 
         case local_package_info(User, ProjectName, Vsn) of
-            undefined ->
+            [] ->
                 Dict;
-            {User1, _, Vsn1, InstallDir1, Deps1} ->
-                TempDict1 = 
-                    case FollowDeps of
-                        true ->
-                            lists:foldl(
-                                fun({DepUser, DepName, DepVsn}, TempDict) ->
-                                    installed_packages([{DepUser, DepName, DepVsn, FollowDeps}], TempDict)
-                                end, Dict, Deps1);
-                        false ->
-                            Dict
-                    end,
-                dict:store({User1, ProjectName, Vsn1}, {InstallDir1, Deps1}, TempDict1)
+            List ->
+                lists:foldl(
+                    fun({User1, _, Vsn1, InstallDir1, Deps1}, TempDict) ->
+                        TempDict1 =
+                            case FollowDeps of
+                                true ->
+                                    lists:foldl(
+                                        fun({DepUser, DepName, DepVsn}, TempDict2) ->
+                                            installed_packages([{DepUser, DepName, DepVsn, FollowDeps}], TempDict2)
+                                        end, TempDict, Deps1);
+                                false ->
+                                    TempDict
+                            end,
+                        dict:store({User1, ProjectName, Vsn1}, {InstallDir1, Deps1}, TempDict1)
+                    end, Dict, List)
         end,
     installed_packages(Tail, Dict1).
     
@@ -330,27 +333,27 @@ installed_app_vsn(App) ->
     
 local_package_info(none, ProjectName, undefined) ->
     case dets:match(epm_index, {{'$1',ProjectName,'$2'},'$3','$4'}) of
-        [] -> undefined;
-        [[User,Vsn,InstallDir,Deps]] ->
-            {User,ProjectName,Vsn,InstallDir,Deps}
+        [] -> [];
+        List ->
+            [{User,ProjectName,Vsn,InstallDir,Deps} || [User,Vsn,InstallDir,Deps] <- List]
     end;    
 local_package_info(none, ProjectName, Vsn) ->
     case dets:match(epm_index, {{'$1',ProjectName,Vsn},'$2','$3'}) of
-        [] -> undefined;
-        [[User,InstallDir,Deps]] ->
-            {User,ProjectName,Vsn,InstallDir,Deps}
+        [] -> [];
+        List ->
+            [{User,ProjectName,Vsn,InstallDir,Deps} || [User,InstallDir,Deps] <- List]            
     end;
 local_package_info(User, ProjectName, undefined) ->
     case dets:match(epm_index, {{User,ProjectName,'$1'},'$2','$3'}) of
-        [] -> undefined;
-        [[Vsn,InstallDir,Deps]] ->
-            {User,ProjectName,Vsn,InstallDir,Deps}
+        [] -> [];
+        List ->
+            [{User,ProjectName,Vsn,InstallDir,Deps} || [Vsn,InstallDir,Deps] <- List]
     end;
 local_package_info(User, ProjectName, Vsn) ->
     case dets:match(epm_index, {{User,ProjectName,Vsn},'$1','$2'}) of
-        [] -> undefined;
-        [[InstallDir,Deps]] ->
-            {User,ProjectName,Vsn,InstallDir,Deps}
+        [] -> [];
+        List ->
+            [{User,ProjectName,Vsn,InstallDir,Deps} || [InstallDir,Deps] <- List]
     end.
 
 %% -----------------------------------------------------------------------------
