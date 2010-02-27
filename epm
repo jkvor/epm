@@ -24,7 +24,13 @@ main(Args) ->
 main1(Args) ->	
 	inets:start(),
 	
-	case dets:open_file(epm_index, [{type, set}]) of
+	Home = 
+		case init:get_argument(home) of
+			{ok, [[H]]} -> [H];
+			_ -> []
+		end,
+		
+	case dets:open_file(epm_index, [{type, set}, {file, filename:join([Home, "epm_index"])}]) of
 	    {ok, _} -> ok;
 	    {error, {file_error,_,eacces}} ->
             exit(lists:flatten(io_lib:format("insufficient access to epm index file.", [])));
@@ -33,11 +39,6 @@ main1(Args) ->
 	end,
 	
 	%% consult global .epm config file in home directory
-	Home = 
-		case init:get_argument(home) of
-			{ok, [[H]]} -> [H];
-			_ -> []
-		end,
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 		{ok, [GlobalConfig], _} ->
 		    case proplists:get_value(install_dir, GlobalConfig) of
