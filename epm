@@ -172,7 +172,7 @@ execute(_GlobalConfig, ["info" | Args]) ->
 				[] -> ok;
 				_ -> io:format("~n")
 			end,
-			write_not_installed_package_info(NotInstalled)
+			write_not_installed_package_info(NotInstalled, true)
 	end;
         
 	
@@ -385,7 +385,10 @@ write_installed_package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
     end.
     
 write_not_installed_package_info(Packages) ->
-    case write_not_installed_package_info(Packages, []) of
+	write_not_installed_package_info(Packages, false).
+	
+write_not_installed_package_info(Packages, IsExact) ->
+    case fetch_not_installed_package_info(Packages, [], IsExact) of
         [] -> 
             io:format("- not found~n");
         Results ->
@@ -394,36 +397,18 @@ write_not_installed_package_info(Packages) ->
         	io:format("===============================~n"),
         	[write_not_installed_package_info(User, ProjectName, Vsn, Repos) || {{User, ProjectName, Vsn}, Repos} <- Results]
     end.
-
-write_not_installed_package_info([], Acc) -> Acc;
-write_not_installed_package_info([{User, ProjectName, Vsn}|Tail], Acc) ->
-    Acc1 = 
-        case User of
-    		none -> 
-    		    case repos_search(ProjectName) of
-    		        [] -> Acc;
-    		        Repos when is_list(Repos) -> [{{User, ProjectName, Vsn}, Repos}|Acc];
-    		        _ -> Acc
-    		    end;
-    		_ -> 
-    			case repos_info(User, ProjectName) of
-    				#repository{}=R -> [{{User, ProjectName, Vsn}, [R]}|Acc];
-    				_ -> Acc
-    			end
-    	end,
-    write_not_installed_package_info(Tail, Acc1).
     
-write_not_installed_package_info(_User, ProjectName, _Vsn, Repos) ->
+write_not_installed_package_info(_User, _ProjectName, _Vsn, Repos) ->
 	lists:foldl(
 		fun(Repo, Count) ->
-			Tags = repos_tags(Repo#repository.owner, ProjectName),
-			Branches = repos_branches(Repo#repository.owner, ProjectName),
+			Tags = repos_tags(Repo#repository.owner, Repo#repository.name),
+			Branches = repos_branches(Repo#repository.owner, Repo#repository.name),
 			case Count of
 				0 -> ok;
 				_ -> io:format("~n")
 			end,
 			[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
-				{"name", ProjectName},
+				{"name", Repo#repository.name},
 				{"owner", Repo#repository.owner},
 				{"followers", Repo#repository.followers},
 				{"homepage", Repo#repository.homepage},
@@ -444,12 +429,43 @@ write_not_installed_package_info(_User, ProjectName, _Vsn, Repos) ->
 			Count+1
 		end, 0, Repos).
 
+fetch_not_installed_package_info([], Acc, _) -> Acc;
+fetch_not_installed_package_info([{User, ProjectName, Vsn}|Tail], Acc, IsExact) ->
+    Acc1 = 
+        case User of
+    		none -> 
+    		    case repos_search(ProjectName) of
+    		        [] -> 
+						Acc;
+    		        Repos when is_list(Repos), IsExact == true -> 
+						Repos1 = [R || R <- Repos, R#repository.name==ProjectName],
+						case Repos1 of
+							[] -> Acc;
+							_ -> [{{User, ProjectName, Vsn}, Repos1}|Acc]
+						end;
+					Repos when is_list(Repos) ->
+						[{{User, ProjectName, Vsn}, Repos}|Acc];
+    		        _ -> 
+						Acc
+    		    end;
+    		_ -> 
+    			case repos_info(User, ProjectName) of
+    				#repository{}=R -> [{{User, ProjectName, Vsn}, [R]}|Acc];
+    				_ -> Acc
+    			end
+    	end,
+    fetch_not_installed_package_info(Tail, Acc1, IsExact).
+
 retrieve_remote_repo(none, ProjectName) ->	
     case repos_search(ProjectName) of
         [] ->
             exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
-        [R0|_] ->
-            R0;
+        Repos when is_list(Repos) ->
+            case lists:filter(fun(R1) -> R1#repository.name==ProjectName end, Repos) of
+				[R0|_] -> R0;
+				[] ->
+					exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
+			end;
         Err ->
             exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s: ~p", [ProjectName, Err])))
     end;
