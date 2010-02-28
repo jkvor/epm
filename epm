@@ -911,7 +911,8 @@ print_cmd_output(Format, Args) ->
 print_cmd_output(_, _, false) -> ok; %% do not print verbose output
 print_cmd_output(Format, Args, true) ->
 	Str = lists:flatten(io_lib:format("    " ++ Format, Args)),
-	Output = re:replace(Str, "\n", "\n    ", [global, {return, list}]),
+	Output0 = re:replace(Str, "\n", "\n    ", [global, {return, list}]),
+	Output = re:replace(Output0, "\~", "", [global, {return, list}]),
 	io:format(string:substr(Output, 1, length(Output)-4), []).
 
 set_cwd_build_home(GlobalConfig) ->	
