@@ -3,7 +3,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 
--record(repository, {name, owner, description, homepage, followers}).
+-record(repository, {name, owner, description, homepage, followers, pushed}).
 
 %% -----------------------------------------------------------------------------
 %% main function
@@ -400,6 +400,7 @@ write_installed_package_info(User, ProjectName, Vsn, InstallDir, Deps) ->
 		{"name", ProjectName},
 		{"owner", User},
 		{"vsn", Vsn},
+		{"pushed", Repo#repository.pushed},
 		{"install dir", InstallDir},
 		{"homepage", Repo#repository.homepage},
 		{"description", Repo#repository.description}
@@ -441,6 +442,7 @@ write_not_installed_package_info(_User, _ProjectName, _Vsn, Repos) ->
 				{"name", Repo#repository.name},
 				{"owner", Repo#repository.owner},
 				{"followers", Repo#repository.followers},
+				{"pushed", Repo#repository.pushed},
 				{"homepage", Repo#repository.homepage},
 				{"description", Repo#repository.description}
 			]],
@@ -765,7 +767,8 @@ repos_search(ProjectName) ->
             						owner = repo_xml_field("username", Repo),
             						description = repo_xml_field("description", Repo),
             						homepage = repo_xml_field("homepage", Repo),
-            						followers = repo_xml_field("followers", Repo)
+            						followers = repo_xml_field("followers", Repo),
+            						pushed = repo_xml_field("pushed", Repo)
 								}|Acc];
 							_ ->
 								Acc
@@ -798,7 +801,8 @@ repos_info(User, ProjectName) ->
 						owner = repo_xml_field("owner", Repo),
 						description = repo_xml_field("description", Repo),
 						homepage = repo_xml_field("homepage", Repo),
-						followers = repo_xml_field("followers", Repo)
+						followers = repo_xml_field("followers", Repo),
+						pushed = repo_xml_field("pushed", Repo)
 					};
 				_ ->
 					undefined
