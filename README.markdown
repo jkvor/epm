@@ -1,3 +1,17 @@
+### epm _IS_
+* an Erlang package manager meant to have _minimal_ impact on projects
+* a simple and easy dependency tracker
+
+### epm _IS NOT_
+* a packaging and deployment tool
+* meant to handle non-Erlang dependencies
+
+### Read the blog post
+
+<http://www.jkvor.com/erlang-package-manager>
+
+### Usage
+
 	install [<user>/]<project> {project options}, ... {global options}
         project options:
              --tag <tag>
@@ -36,19 +50,9 @@
     search <project>, ...
 
     list
-    
-### Read the blog post
 
-<http://www.jkvor.com/erlang-package-manager>
-
-### epm _IS_
-* an Erlang package manager meant to have _minimal_ impact on projects
-* a simple and easy dependency tracker
-
-### epm _IS NOT_
-* a packaging and deployment tool
-* meant to handle non-Erlang dependencies
-
+	latest
+	
 ### Do it
 
 search for an Erlang app  
