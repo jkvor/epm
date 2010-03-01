@@ -662,7 +662,7 @@ update_epm() ->
 		case os:find_executable("epm") of
 			false ->
 				case filelib:is_regular("epm") of
-					true -> "epm";
+					true -> "./epm";
 					fasle -> exit("failed to find epm executable to replace")
 				end;
 			F -> F
