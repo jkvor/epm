@@ -669,12 +669,12 @@ update_epm() ->
 		end,
 	Url = "http://github.com/JacobVorreuter/epm/raw/master/epm",
 	case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
-		{ok, {_, 200, _}, _, Body} ->
+		{ok, {{_, 200, _}, _, Body}} ->
 			case file:write_file(File, Body) of
 				ok ->
 					io:format("+ updated epm (~s) to latest version~n", [File]);
 				{error, Reason} ->
-					exit(lists:flatten(io_lib:format("failed to overwrite epm executable: ~p~n", [Reason])))
+					exit(lists:flatten(io_lib:format("failed to overwrite epm executable ~s: ~p~n", [File, Reason])))
 			end;
 		_ ->
 			exit("failed to download latest version of epm")
