@@ -1,10 +1,42 @@
-	install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]
-	remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],] [--verbose]
-	update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]
-	info [[<user>/]<project>,] [--verbose]
-	list [--verbose]
-	search [<project>,]
+	install [<user>/]<project> {project options}, ... {global options}
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+             --with-deps (default)
+             --without-deps
+             --prebuild-command <cmd>
+             --build-command <cmd>
+             --test-command <cmd>
+        global options:
+             --verbose
 
+    remove [<user>/]<project> {project options}, ... {global options}
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+             --with-deps
+             --without-deps (default)
+        global options:
+             --verbose
+
+    update [<user>/]<project> {project options}, ... {global options}
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+             --with-deps
+             --without-deps (default)
+        global options:
+             --verbose
+
+    info [<user>/]<project>, ...
+
+    search <project>, ...
+
+    list
+    
 ### Read the blog post
 
 <http://www.jkvor.com/erlang-package-manager>

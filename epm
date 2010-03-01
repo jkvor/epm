@@ -80,7 +80,7 @@ execute(GlobalConfig, ["install" | Args]) ->
             case io:get_chars("", 1) of
                 C when C == "y"; C == "\n" -> 
                     io:format("~n"),
-                    [install_package(GlobalConfig, U, N, V, proplists:get_value(deps, Props)) || {{U,N,V},Props} <- NotInstalled];
+                    [install_package(GlobalConfig, U, N, V, Props) || {{U,N,V},Props} <- NotInstalled];
                 _ -> ok
             end
 	end;
@@ -200,13 +200,40 @@ execute(_GlobalConfig, ["list" | Args]) ->
 	end;
 	
 execute(_, _) ->
-    io:format("Usage: epm command arguments~n"),
-    io:format("    install [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps (default)] [--without-deps],] [--verbose]~n"),
-    io:format("    remove [[<user>/]<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],] [--verbose]~n"),
-    io:format("    update [<project> [--tag <tag>] [--branch <branch>] [--sha <sha>] [--with-deps] [--without-deps (default)],]~n"),
-    io:format("    info [[<user>/]<project>,] [--verbose]~n"),
-    io:format("    list [--verbose]~n"),
-    io:format("    search [<project>,]~n"),
+    io:format("Usage: epm commands~n~n"),
+    io:format("    install [<user>/]<project> {project options}, ... {global options}~n"),
+	io:format("        project options:~n"),
+	io:format("             --tag <tag>~n"),
+	io:format("             --branch <branch>~n"),
+	io:format("             --sha <sha>~n"),
+	io:format("             --with-deps (default)~n"),
+	io:format("             --without-deps~n"),
+	io:format("             --prebuild-command <cmd>~n"),
+	io:format("             --build-command <cmd>~n"),
+	io:format("             --test-command <cmd>~n"),
+	io:format("        global options:~n"),
+	io:format("             --verbose~n~n"),
+    io:format("    remove [<user>/]<project> {project options}, ... {global options}~n"),
+	io:format("        project options:~n"),
+	io:format("             --tag <tag>~n"),
+	io:format("             --branch <branch>~n"),
+	io:format("             --sha <sha>~n"),
+	io:format("             --with-deps~n"),
+	io:format("             --without-deps (default)~n"),
+	io:format("        global options:~n"),
+	io:format("             --verbose~n~n"),
+    io:format("    update [<user>/]<project> {project options}, ... {global options}~n"),
+	io:format("        project options:~n"),
+	io:format("             --tag <tag>~n"),
+	io:format("             --branch <branch>~n"),
+	io:format("             --sha <sha>~n"),
+	io:format("             --with-deps~n"),
+	io:format("             --without-deps (default)~n"),
+	io:format("        global options:~n"),
+	io:format("             --verbose~n~n"),
+    io:format("    info [<user>/]<project>, ...~n~n"),
+    io:format("    search <project>, ...~n~n"),
+    io:format("    list~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -240,6 +267,9 @@ collect_args(Target, [Arg | Rest], Packages, Flags) ->
 parse_tag(install, "--tag") -> {tag, true};
 parse_tag(install, "--branch") -> {branch, true};
 parse_tag(install, "--sha") -> {sha, true};
+parse_tag(install, "--prebuild-command") -> {prebuild_command, true};
+parse_tag(install, "--build-command") -> {build_command, true};
+parse_tag(install, "--test-command") -> {test_command, true};
 
 parse_tag(info, "--tag") -> {tag, true};
 parse_tag(info, "--branch") -> {branch, true};
@@ -481,7 +511,7 @@ retrieve_remote_repo(User, ProjectName) ->
 %% -----------------------------------------------------------------------------
 %% INSTALL
 %% -----------------------------------------------------------------------------
-install_package(GlobalConfig, User, ProjectName, Vsn, Deps) ->
+install_package(GlobalConfig, User, ProjectName, Vsn, Props) ->
 	%% switch to build home dir
 	set_cwd_build_home(GlobalConfig),
 	
@@ -493,12 +523,13 @@ install_package(GlobalConfig, User, ProjectName, Vsn, Deps) ->
 	set_cwd(LocalProjectDir),
 	
 	%% build/install project
-	InstallDir = build_project(GlobalConfig, ProjectName),
+	InstallDir = build_project(GlobalConfig, ProjectName, Props),
 	
 	%% switch to build home dir and delete cloned project
 	set_cwd_build_home(GlobalConfig),
 	del_dir(LocalProjectDir),
 	
+	Deps = proplists:get_value(deps, Props),
 	dets:insert(epm_index, {{User, ProjectName, Vsn}, InstallDir, Deps}),
 	
 	ok.
@@ -528,7 +559,7 @@ update_package(GlobalConfig, User, ProjectName, Vsn, _InstallDir, _Deps) ->
 	set_cwd(LocalProjectDir),
 	
 	%% build/install project
-	_InstallDir = build_project(GlobalConfig, ProjectName),
+	_InstallDir = build_project(GlobalConfig, ProjectName, []),
 	
 	%% switch to build home dir and delete cloned project
 	set_cwd_build_home(GlobalConfig),
@@ -543,40 +574,56 @@ read_vsn_from_args([{sha, Sha}|_], _) -> Sha;
 read_vsn_from_args([_|Tail], Default) -> read_vsn_from_args(Tail, Default);
 read_vsn_from_args([], Default) -> Default.
 		
-build_project(GlobalConfig, ProjectName) ->
+build_project(GlobalConfig, ProjectName, Props) ->
 	Config = 
 	    case file:consult(ProjectName ++ ".epm") of
     		{ok, [Config0]} -> Config0;
     		_ -> []
     	end,
-	prebuild(ProjectName, Config),
-	build(ProjectName, Config),
-	test(ProjectName, Config),
+	UserSuppliedPrebuildCommand = proplists:get_value(prebuild_command, Props),
+	UserSuppliedBuildCommand = proplists:get_value(build_command, Props),
+	UserSuppliedTestCommand = proplists:get_value(test_command, Props),
+	prebuild(ProjectName, Config, UserSuppliedPrebuildCommand),
+	build(ProjectName, Config, UserSuppliedBuildCommand),
+	test(ProjectName, Config, UserSuppliedTestCommand),
 	install(ProjectName, Config, proplists:get_value(install_dir, GlobalConfig)).
 
-prebuild(ProjectName, Config) ->
+prebuild(ProjectName, Config, undefined) ->
     case proplists:get_value(prebuild_command, Config) of
 		undefined -> ok;
-		PrebuildCmd -> 
-			io:format("+ running ~s prebuild command~n", [ProjectName]),
-			print_cmd_output("~s~n", [PrebuildCmd]),
-			do_cmd(PrebuildCmd, fail)
-	end.
+		PrebuildCmd -> prebuild1(ProjectName, PrebuildCmd)
+	end;
+prebuild(ProjectName, _Config, PrebuildCmd) ->
+	prebuild1(ProjectName, PrebuildCmd).
 	
-build(ProjectName, Config) ->
+prebuild1(ProjectName, PrebuildCmd) ->
+	io:format("+ running ~s prebuild command~n", [ProjectName]),
+	print_cmd_output("~s~n", [PrebuildCmd]),
+	do_cmd(PrebuildCmd, fail).
+	
+build(ProjectName, Config, undefined) ->
     BuildCmd = proplists:get_value(build_command, Config, "make"),
+	build1(ProjectName, BuildCmd);
+build(ProjectName, _Config, BuildCmd) ->
+	build1(ProjectName, BuildCmd).	
+
+build1(ProjectName, BuildCmd) ->
 	io:format("+ running ~s build command~n", [ProjectName]),
 	print_cmd_output("~s~n", [BuildCmd]),
 	do_cmd(BuildCmd, fail).
 
-test(ProjectName, Config) ->
+test(ProjectName, Config, undefined) ->
     case proplists:get_value(test_command, Config) of
 		undefined -> ok;
-		TestCmd -> 
-			io:format("+ running ~s test command~n", [ProjectName]),
-			print_cmd_output("~s~n", [TestCmd]),
-			do_cmd(TestCmd, fail)
-	end.
+		TestCmd -> test1(ProjectName, TestCmd)
+	end;
+test(ProjectName, _Config, TestCmd) ->
+	test1(ProjectName, TestCmd).
+	
+test1(ProjectName, TestCmd) ->
+	io:format("+ running ~s test command~n", [ProjectName]),
+	print_cmd_output("~s~n", [TestCmd]),
+	do_cmd(TestCmd, fail).
 	
 install(ProjectName, Config, undefined) ->
 	install(ProjectName, Config, code:lib_dir());
@@ -653,7 +700,7 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
                     end, Dict, get_package_deps(Repo#repository.owner, Repo#repository.name, Vsn))
         end,
     
-    Dict2 = dict:store(Key, [{deps, Deps}], Dict1),
+    Dict2 = dict:store(Key, [{deps, Deps}|CommandLineTags], Dict1),
     gather_remote_deps(Tail, G, Parent, Dict2).
 
 filter_installed_deps(Apps) ->
