@@ -130,13 +130,11 @@ execute(GlobalConfig, ["update" | Args]) ->
 	end;
 	
 execute(_GlobalConfig, ["search" | Args]) ->
-    {Packages, Flags} = collect_args(search, Args),
-    put(verbose, lists:member(verbose, Flags)),
+    {Packages, _Flags} = collect_args(search, Args),
     write_not_installed_package_info([{U,N,read_vsn_from_args(CommandLineArgs)} || {{U,N},CommandLineArgs} <- lists:reverse(Packages)]);
     
 execute(_GlobalConfig, ["info" | Args]) ->
-	{Packages, Flags} = collect_args(info, Args),
-	put(verbose, lists:member(verbose, Flags)),
+	{Packages, _Flags} = collect_args(info, Args),
     {Installed, NotInstalled} = lists:foldl(
 		fun({{User, ProjectName}, CommandLineTags}, {TempInstalled, TempNotInstalled}) ->
 			Vsn = read_vsn_from_args(CommandLineTags, undefined),
@@ -176,9 +174,7 @@ execute(_GlobalConfig, ["info" | Args]) ->
 	end;
         
 	
-execute(_GlobalConfig, ["list" | Args]) ->
-    {_Packages, Flags} = collect_args(list, Args),
-	put(verbose, lists:member(verbose, Flags)),
+execute(_GlobalConfig, ["list" | _Args]) ->
     Installed = installed_packages(),
     case Installed of
 		[] -> 
@@ -198,7 +194,10 @@ execute(_GlobalConfig, ["list" | Args]) ->
 					Count+1
 				end, 0, lists:reverse(Installed))
 	end;
-	
+
+execute(_GlobalConfig, ["latest" | _Args]) ->
+	update_epm();
+
 execute(_, _) ->
     io:format("Usage: epm commands~n~n"),
     io:format("    install [<user>/]<project> {project options}, ... {global options}~n"),
@@ -233,7 +232,8 @@ execute(_, _) ->
 	io:format("             --verbose~n~n"),
     io:format("    info [<user>/]<project>, ...~n~n"),
     io:format("    search <project>, ...~n~n"),
-    io:format("    list~n"),
+    io:format("    list~n~n"),
+   	io:format("    latest~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -654,6 +654,32 @@ install(ProjectName, _Config, LibDir) ->
 	end,
 	Dir.
 
+%% -----------------------------------------------------------------------------
+%% Replace epm script with most recent
+%% -----------------------------------------------------------------------------
+update_epm() ->
+	File = 
+		case os:find_executable("epm") of
+			false ->
+				case filelib:is_regular("epm") of
+					true -> "epm";
+					fasle -> exit("failed to find epm executable to replace")
+				end;
+			F -> F
+		end,
+	Url = "http://github.com/JacobVorreuter/epm/raw/master/epm",
+	case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+		{ok, {_, 200, _}, _, Body} ->
+			case file:write_file(File, Body) of
+				ok ->
+					io:format("+ updated epm to latest version~n");
+				{error, Reason} ->
+					exit(lists:flatten(io_lib:format("failed to overwrite epm executable: ~p~n", [Reason])))
+			end;
+		_ ->
+			exit("failed to download latest version of epm")
+	end.
+	
 %% -----------------------------------------------------------------------------
 %% Compile list of dependencies
 %% -----------------------------------------------------------------------------
