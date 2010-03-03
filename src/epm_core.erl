@@ -35,6 +35,31 @@ execute(GlobalConfig, ["install" | Args]) ->
             end
 	end;
 
+execute(GlobalConfig, ["remove" | Args]) ->
+	{Packages, Flags} = collect_args(remove, Args),
+	put(verbose, lists:member(verbose, Flags)),
+	Installed = installed_packages(Packages),
+    case Installed of
+        [] ->
+            io:format("+ nothing to remove: no matching packages installed~n");
+        _ ->
+            io:format("===============================~n"),
+            io:format("Remove the following packages?~n"),
+            io:format("===============================~n"),
+            [io:format("    + ~s-~s-~s~n", [U,N,V]) || #package{user=U, name=N, vsn=V} <- Installed],
+            io:format("~n([y]/n) "),
+            case io:get_chars("", 1) of
+                C when C == "y"; C == "\n" -> 
+                    io:format("~n"),
+                    [remove_package(GlobalConfig, Package) || Package <- Installed];
+                _ -> ok
+            end
+        end;
+
+execute(_GlobalConfig, ["search" | Args]) ->
+    {Packages, _Flags} = collect_args(search, Args),
+    write_not_installed_package_info(lists:reverse(Packages));
+        
 execute(_GlobalConfig, ["list" | _Args]) ->
     Installed = installed_packages(),
     case Installed of
@@ -75,8 +100,6 @@ execute(_, _) ->
 	io:format("             --tag <tag>~n"),
 	io:format("             --branch <branch>~n"),
 	io:format("             --sha <sha>~n"),
-	io:format("             --with-deps~n"),
-	io:format("             --without-deps (default)~n"),
 	io:format("        global options:~n"),
 	io:format("             --verbose~n~n"),
     io:format("    update [<user>/]<project> {project options}, ... {global options}~n"),
@@ -158,9 +181,54 @@ split_package([A | Tail], User) -> split_package(Tail, User ++ [A]).
 %% -----------------------------------------------------------------------------
 %% package info
 %% -----------------------------------------------------------------------------	
+local_package_info(#package{user=none, name=ProjectName, vsn=undefined}) ->
+    case dets:match(epm_index, {{'_',ProjectName,'_'},'$1'}) of
+        [] -> [];
+        List -> [Package || [Package] <- List]
+    end;    
+local_package_info(#package{user=none, name=ProjectName, vsn=Vsn}) ->
+    case dets:match(epm_index, {{'_',ProjectName,Vsn},'$1'}) of
+        [] -> [];
+        List -> [Package || [Package] <- List]
+    end;
+local_package_info(#package{user=User, name=ProjectName, vsn=undefined}) ->
+    case dets:match(epm_index, {{User,ProjectName,'_'},'$1'}) of
+        [] -> [];
+        List -> [Package || [Package] <- List]
+    end;
+local_package_info(#package{user=User, name=ProjectName, vsn=Vsn}) ->
+    case dets:match(epm_index, {{User,ProjectName,Vsn},'$1'}) of
+        [] -> [];
+        List -> [Package || [Package] <- List]
+    end.
+    
 installed_packages() ->
     [Package || [{_,Package}] <- dets:match(epm_index, '$1')].
 
+installed_packages(Packages) ->
+    [V || {_K,V} <- dict:to_list(installed_packages1(Packages, dict:new()))].
+    
+installed_packages1([], Dict) ->
+    Dict;
+    
+installed_packages1([Package|Tail], Dict) ->
+    Dict1 = 
+        case local_package_info(Package) of
+            [] ->
+                Dict;
+            List ->
+                lists:foldl(
+                    fun(InstalledPackage, TempDict) ->
+                        TempDict1 = dict:store({
+                            InstalledPackage#package.user, 
+                            InstalledPackage#package.name, 
+                            InstalledPackage#package.vsn }, InstalledPackage, TempDict),
+                        DependantPackages = dependant_installed_packages(InstalledPackage),    
+                        installed_packages1(DependantPackages, TempDict1)
+                    end, Dict, List)
+        end,
+   installed_packages1(Tail, Dict1). 
+    
 installed_app_vsn(#package{user=User, name=Name, vsn=Vsn}) ->
     case dets:lookup(epm_index, {User, Name, Vsn}) of
         [{{_,Name,_}, Package}] -> 
@@ -172,7 +240,23 @@ installed_app_vsn(#package{user=User, name=Name, vsn=Vsn}) ->
             end;
         _ -> undefined
     end.
- 
+
+dependant_installed_packages(Package) ->
+    dependant_installed_packages(Package, [], dets:match(epm_index, '$1')).
+
+dependant_installed_packages(_Package, Acc, []) -> Acc;
+dependant_installed_packages(#package{user=User,name=Name,vsn=Vsn}=Package, Acc, [[{_,#package{deps=Deps}=InstalledPackage}]|Tail]) ->
+    Acc1 = case lists:filter(
+            fun({U,N,V}) ->
+                (U==User orelse U==none) andalso
+                (N==Name) andalso
+                (V==Vsn)
+            end, Deps) of
+        [] -> Acc;
+        [_] -> [InstalledPackage|Acc]
+    end,
+    dependant_installed_packages(Package, Acc1, Tail).
+     
 %% -----------------------------------------------------------------------------
 %% Print package info
 %% -----------------------------------------------------------------------------	
@@ -196,7 +280,82 @@ write_installed_package_info(Package) ->
 				_ -> lists:flatten(io_lib:format("~s/~s/~s", [U,N,V]))
              end || {U,N,V} <- Deps], "\n    ")])
     end.
-            
+
+write_not_installed_package_info(GlobalConfig, Packages) ->
+    RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, [github_api]),
+	write_not_installed_package_info1(Packages, RepoPlugins, false).
+	
+write_not_installed_package_info1(Packages, RepoPlugins, IsExact) ->
+    case fetch_not_installed_package_info(Packages, RepoPlugins, [], IsExact) of
+        [] -> 
+            io:format("- not found~n");
+        Results ->
+            io:format("===============================~n"),
+        	io:format("AVAILABLE~n"),
+        	io:format("===============================~n"),
+        	[write_not_installed_package_info1(User, ProjectName, Vsn, Repos) || {{User, ProjectName, Vsn}, Repos} <- Results]
+    end.
+    
+write_not_installed_package_info1(_User, _ProjectName, _Vsn, Repos) ->
+	lists:foldl(
+		fun(Repo, Count) ->
+			Tags = repos_tags(Repo#repository.owner, Repo#repository.name),
+			Branches = repos_branches(Repo#repository.owner, Repo#repository.name),
+			case Count of
+				0 -> ok;
+				_ -> io:format("~n")
+			end,
+			[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
+				{"name", Repo#repository.name},
+				{"owner", Repo#repository.owner},
+				{"followers", Repo#repository.followers},
+				{"pushed", Repo#repository.pushed},
+				{"homepage", Repo#repository.homepage},
+				{"description", Repo#repository.description}
+			]],
+			if 
+			    Tags =/= [] -> 
+			        io:format("  tags:~n"),
+			        [io:format("    ~s~n", [K]) || {K,_V} <- Tags];
+			    true -> ok
+			end,
+			if 
+			    Branches =/= [] -> 
+		            io:format("  branches:~n"),
+		            [io:format("    ~s~n", [K]) || {K,_V} <- Branches];
+			    true -> ok 
+			end,
+			Count+1
+		end, 0, Repos).
+
+fetch_not_installed_package_info([], _, Acc, _) -> Acc;
+fetch_not_installed_package_info([#package{user=User,name=ProjectName,vsn=Vsn,}|Tail], RepoPlugins, Acc, IsExact) ->
+    Repos = retrieve_remote_repos(RepoPlugins, User, ProjectName, IsExact),
+    Acc1 = 
+        case User of
+    		none -> 
+    		    case apply(Repo#repository.api_module, search, [ProjectName]) of
+    		        [] -> 
+						Acc;
+    		        Repos when is_list(Repos), IsExact == true -> 
+						Repos1 = [R || R <- Repos, R#repository.name==ProjectName],
+						case Repos1 of
+							[] -> Acc;
+							_ -> [Repos1|Acc]
+						end;
+					Repos when is_list(Repos) ->
+						[Repos|Acc];
+    		        _ -> 
+						Acc
+    		    end;
+    		_ -> 
+    			case apply(Repo#repository.api_module, info, [User, ProjectName]) of
+    				#repository{}=R -> [{{User, ProjectName, Vsn}, [R]}|Acc];
+    				_ -> Acc
+    			end
+    	end,
+    fetch_not_installed_package_info(Tail, Acc1, IsExact).
+		           
 %% -----------------------------------------------------------------------------
 %% INSTALL
 %% -----------------------------------------------------------------------------
@@ -226,6 +385,19 @@ install_package(GlobalConfig, Package) ->
 	
 	ok.
 
+%% -----------------------------------------------------------------------------
+%% REMOVE
+%% -----------------------------------------------------------------------------
+remove_package(_GlobalConfig, #package{user=User, name=Name, vsn=Vsn, install_dir=InstallDir}) ->
+    io:format("+ removing package ~s-~s-~s from ~s~n", [User, Name, Vsn, InstallDir]),
+    RemoveCmd = "rm -rf " ++ InstallDir,
+    epm_util:print_cmd_output("~s~n", [RemoveCmd]),
+    epm_util:do_cmd(RemoveCmd, fail),
+    dets:delete(epm_index, {User,Name,Vsn}).
+
+%% -----------------------------------------------------------------------------
+%% Read vsn
+%% -----------------------------------------------------------------------------    
 read_vsn_from_args(Args) ->
     read_vsn_from_args(Args, "master").
     
@@ -415,3 +587,32 @@ retrieve_remote_repo([Module|Tail], User, ProjectName) ->
 			?EXIT("failed to locate remote repo for ~s: ~p", [ProjectName, Err])
 	end.
 	
+retrieve_remote_repos(Modules, User, ProjectName, IsExact) ->
+    retrieve_remote_repos(Modules, User, ProjectName, IsExact, []).
+    
+retrieve_remote_repos([], _, ProjectName, _, Acc) -> Acc;
+    
+retrieve_remote_repos([Module|Tail], none, ProjectName, IsExact, Acc) ->	
+    case apply(Module, search, [ProjectName]) of
+        [] ->
+            retrieve_remote_repos(Tail, none, ProjectName, IsExact, Acc);        
+        Repos when is_list(Repos), IsExact==true ->
+            case lists:filter(fun(R1) -> R1#repository.name==ProjectName end, Repos) of
+				[] -> retrieve_remote_repos(Tail, none, ProjectName, IsExact, Acc);
+				R0s -> retrieve_remote_repos(Tail, none, ProjectName, IsExact, lists:append(Acc, R0s))
+			end;
+        Repos when is_list(Repos) ->
+            retrieve_remote_repos(Tail, none, ProjectName, IsExact, lists:append(Acc, Repos));
+        Err ->
+            ?EXIT("failed to locate remote repos for ~s: ~p", [ProjectName, Err])
+    end;
+
+retrieve_remote_repos([Module|Tail], User, ProjectName, IsExact, Acc) ->
+	case apply(Module, info, [User, ProjectName]) of
+		Repo when is_record(Repo, repository) -> 
+		    retrieve_remote_repos(Tail, User, ProjectName, IsExact, Acc ++ [Repo]);
+		undefined -> 
+		    retrieve_remote_repos(Tail, User, ProjectName, IsExact, Acc);
+		Err -> 
+			?EXIT("failed to locate remote repo for ~s: ~p", [ProjectName, Err])
+	end.
