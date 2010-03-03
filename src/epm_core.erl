@@ -7,7 +7,7 @@
 execute(GlobalConfig, ["install" | Args]) ->
     {Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
-	Apps = gather_remote_deps(Packages),
+	Deps = package_dependencies(Packages),
 	{Installed, NotInstalled} = filter_installed_deps(Apps),
 	case NotInstalled of
 	    [] ->
@@ -188,6 +188,12 @@ execute(_, _) ->
 %% -----------------------------------------------------------------------------
 %% parse input args
 %% -----------------------------------------------------------------------------
+
+%% collect_args(Target, Args) -> Results
+%%   Target = atom()
+%%	 Args = [string()]
+%%   Results = {[package(), Flags]}
+%%	 Flags = [atom()]
 collect_args(Target, Args) -> 
     collect_args(Target, Args, [], []).
 collect_args(_, [], Packages, Flags) -> 
@@ -196,14 +202,18 @@ collect_args(Target, [Arg | Rest], Packages, Flags) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
-			collect_args(Target, Rest, [{{User, ProjectName}, []}|Packages], Flags);
+			collect_args(Target, Rest, [#package{user=User, name=ProjectName}|Packages], Flags);
 		{Tag, true} -> %% tag with trailing value
 			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			[{PackageCreds, Props}|OtherPackages] = Packages, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest1, [{PackageCreds, Props ++ [{Tag, Value}]}|OtherPackages], Flags);
+			[#package{args=Args}=Package|OtherPackages] = Packages, %% this tag applies to the last project on the stack
+			Vsn = if
+				Tag==tag; Tag==branch; Tag==sha -> Value;
+				true -> Package#package.vsn
+			end,
+			collect_args(Target, Rest1, [Package#package{vsn=Vsn, args=Args ++ [{Tag, Value}]}|OtherPackages], Flags);
 		{Tag, false} ->	 %% tag with no trailing value
-			[{PackageCreds, Props}|OtherPackages] = Packages, %% this tag applies to the last project on the stack
-			collect_args(Target, Rest, [{PackageCreds, Props ++ [Tag]}|OtherPackages], Flags);
+			[#package{args=Args}=Package|OtherPackages] = Packages,
+			collect_args(Target, Rest, [Package#package{args=Args ++ [Tag]}|OtherPackages], Flags);
 		Flag ->
 			collect_args(Target, Rest, Packages, [Flag|Flags])
 	end.
@@ -436,28 +446,6 @@ fetch_not_installed_package_info([{User, ProjectName, Vsn}|Tail], Acc, IsExact) 
     			end
     	end,
     fetch_not_installed_package_info(Tail, Acc1, IsExact).
-
-retrieve_remote_repo(none, ProjectName) ->	
-    case repos_search(ProjectName) of
-        [] ->
-            exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])));
-        Repos when is_list(Repos) ->
-            case lists:filter(fun(R1) -> R1#repository.name==ProjectName end, Repos) of
-				[R0|_] -> R0;
-				[] ->
-					exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s", [ProjectName])))
-			end;
-        Err ->
-            exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s: ~p", [ProjectName, Err])))
-    end;
-	
-retrieve_remote_repo(User, ProjectName) ->
-	case repos_info(User, ProjectName) of
-		#repository{}=Repo ->
-			Repo;
-		Err -> 
-			exit(lists:flatten(io_lib:format("failed to locate remote repo for ~s: ~p", [ProjectName, Err])))
-	end.
 	
 %% -----------------------------------------------------------------------------
 %% INSTALL
@@ -634,6 +622,14 @@ update_epm() ->
 %% -----------------------------------------------------------------------------
 %% Compile list of dependencies
 %% -----------------------------------------------------------------------------
+package_dependencies(Packages) ->
+	G = digraph:new(),
+    AppInfo = package_dependencies1(Packages, G, undefined, dict:new()),
+    Deps = digraph_utils:topsort(G),
+    digraph:delete(G),
+    [{Dep, dict:fetch(Dep, AppInfo)} || Dep <- Deps].
+
+
 %% returns [{{User,Name,Vsn},[{deps, Deps}]}]
 gather_remote_deps(Packages) ->
     G = digraph:new(),
@@ -643,11 +639,11 @@ gather_remote_deps(Packages) ->
     [{Dep, dict:fetch(Dep, AppInfo)} || Dep <- Deps].
    
 gather_remote_deps([], _, _, Dict) -> Dict;
-gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dict) ->
-    Repo = retrieve_remote_repo(User, ProjectName),
-    Vsn = read_vsn_from_args(CommandLineTags),
-    WithoutDeps = lists:member(without_deps, CommandLineTags),
-	Key = {Repo#repository.owner, Repo#repository.name, Vsn},
+gather_remote_deps([Package|Tail], G, Parent, Dict) ->
+	RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, [github_api]),
+    Repo = retrieve_remote_repo(RepoPlugins, Package#package.user, Package#package.name),
+    WithoutDeps = lists:member(without_deps, Package#package.args),
+	Key = {Repo#repository.owner, Repo#repository.name, Package#package.vsn},
     
     digraph:add_vertex(G, Key),
     
@@ -659,7 +655,7 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
                 true ->
                     ok;
                 false ->
-                    exit(lists:flatten(io_lib:format("circular dependency detected: ~s <--> ~s", [ParentProjectName, Repo#repository.name])))
+                    ?EXIT("circular dependency detected: ~s <--> ~s", [ParentProjectName, Repo#repository.name])
             end
     end,
     
@@ -674,7 +670,7 @@ gather_remote_deps([{{User, ProjectName}, CommandLineTags}|Tail], G, Parent, Dic
                         DepVsn = read_vsn_from_args(Args),
                         TempDict1 = gather_remote_deps([{{DepUser, DepName}, Args}], G, Key, TempDict),
                         {{DepUser, DepName, DepVsn}, TempDict1} 
-                    end, Dict, get_package_deps(Repo#repository.owner, Repo#repository.name, Vsn))
+                    end, Dict, package_deps(Repo#repository.owner, Repo#repository.name, Vsn))
         end,
     
     Dict2 = dict:store(Key, [{deps, Deps}|CommandLineTags], Dict1),
@@ -691,3 +687,25 @@ filter_installed_deps([{App,Info}|Tail], Installed, NotInstalled) ->
         undefined -> filter_installed_deps(Tail, Installed, [{App,Info}|NotInstalled]);
         AppVsn -> filter_installed_deps(Tail, [{App,[{vsn, AppVsn}|Info]}|Installed], NotInstalled)
     end.
+
+retrieve_remote_repo(RepoPlugins, none, ProjectName) ->	
+    case search(ProjectName) of
+        [] ->
+            ?EXIT("failed to locate remote repo for ~s", [ProjectName]);
+        Repos when is_list(Repos) ->
+            case lists:filter(fun(R1) -> R1#repository.name==ProjectName end, Repos) of
+				[R0|_] -> R0;
+				[] ->
+					?EXIT("failed to locate remote repo for ~s", [ProjectName])
+			end;
+        Err ->
+            ?EXIT("failed to locate remote repo for ~s: ~p", [ProjectName, Err])
+    end;
+
+retrieve_remote_repo(User, ProjectName) ->
+	case info(User, ProjectName) of
+		#repository{}=Repo ->
+			Repo;
+		Err -> 
+			?EXIT("failed to locate remote repo for ~s: ~p", [ProjectName, Err])
+	end.
