@@ -3,19 +3,20 @@
 
 -export([package_deps/3, search/1, info/2, tags/2, branches/2, download_package/2]).
 
+-include_lib("xmerl/include/xmerl.hrl").
 -include("epm.hrl").
 
 package_deps(User, ProjectName, Vsn) ->
     if
-        User == undefined -> ?EXIT("get_package_deps/3 user cannot be undefined");
+        User == undefined -> ?EXIT("get_package_deps/3 user cannot be undefined",[]);
         true -> ok
     end,
     if
-        ProjectName == undefined -> ?EXIT("get_package_deps/3 name cannot be undefined");
+        ProjectName == undefined -> ?EXIT("get_package_deps/3 name cannot be undefined",[]);
         true -> ok
     end,
     if
-        Vsn == undefined -> ?EXIT("get_package_deps/3 vsn cannot be undefined");
+        Vsn == undefined -> ?EXIT("get_package_deps/3 vsn cannot be undefined",[]);
         true -> ok
     end,
     Url = lists:flatten(io_lib:format("http://github.com/~s/~s/raw/~s/~s.epm", [User, ProjectName, Vsn, ProjectName])),
@@ -39,7 +40,8 @@ search(ProjectName) ->
             						description = repo_xml_field("description", Repo),
             						homepage = repo_xml_field("homepage", Repo),
             						followers = repo_xml_field("followers", Repo),
-            						pushed = repo_xml_field("pushed", Repo)
+            						pushed = repo_xml_field("pushed", Repo),
+            						api_module = ?MODULE
 								}|Acc];
 							_ ->
 								Acc
@@ -73,7 +75,8 @@ info(User, ProjectName) ->
 						description = repo_xml_field("description", Repo),
 						homepage = repo_xml_field("homepage", Repo),
 						followers = repo_xml_field("followers", Repo),
-						pushed = repo_xml_field("pushed", Repo)
+						pushed = repo_xml_field("pushed", Repo),
+						api_module = ?MODULE
 					};
 				_ ->
 					undefined
@@ -84,7 +87,7 @@ info(User, ProjectName) ->
 
 tags(User, ProjectName) ->
     Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags",
-    case git_request_as_str(Url) of
+    case request_as_str(Url) of
         "--- \ntags: {}\n\n" -> [];
         "--- \ntags: \n" ++ Body -> 
             [begin
@@ -96,7 +99,7 @@ tags(User, ProjectName) ->
 
 branches(User, ProjectName) ->
     Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches",
-    case git_request_as_str(Url) of
+    case request_as_str(Url) of
         "--- \nbranches: {}\n\n" -> [];
         "--- \nbranches: \n" ++ Body -> 
             [begin
@@ -106,8 +109,7 @@ branches(User, ProjectName) ->
 		_ -> []
 	end.
 
-download_package(User, ProjectName, Vsn) ->
-    Repo = retrieve_remote_repo(User, ProjectName),
+download_package(Repo, Vsn) ->
     Url = lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [Repo#repository.owner, Repo#repository.name, Vsn])),
 	epm_package:download_tarball(Repo, Url).
 			
@@ -138,6 +140,8 @@ request_as_str(Url) ->
 	        not_found;
         {ok, {{_, 404, _}, _, _}} ->
 	        not_found;
+	    {ok, _} ->
+	        request_failed;
 	    {error, Reason} ->
 	        io:format("timeout? ~p~n", [Reason]),
 	        Reason

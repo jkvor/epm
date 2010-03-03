@@ -1,7 +1,9 @@
 -module(epm_package).
 -export([download_tarball/2]).
 
-epm_package:download_tarball(Repo, Url) ->
+-include("epm.hrl").
+
+download_tarball(Repo, Url) ->
 	LocalProjectDir = Repo#repository.owner ++ "-" ++ Repo#repository.name,
 	io:format("+ downloading ~s~n", [Url]),
     case http:request(get, {Url, [{"User-Agent", "EPM"}]}, [{timeout, 6000}], [{body_format, binary}]) of
@@ -21,8 +23,8 @@ epm_package:download_tarball(Repo, Url) ->
                     ?EXIT("failed to extract ~s tarball: ~p", [Repo#repository.name, Reason1])
             end;
         {ok, {{_,404,_},_,_}} ->
-            ?EXIT("remote project does not exist: ~s/~s/~s", [Repo#repository.owner, Repo#repository.name, Vsn]);
+            ?EXIT("remote project does not exist: ~s", [Url]);
         Error ->
             io:format("~p~n", [Error]),
-            ?EXIT("failed to download ~s tarball", [Repo#repository.name])
+            ?EXIT("failed to download ~s tarball: ~s", [Repo#repository.name, Url])
     end.

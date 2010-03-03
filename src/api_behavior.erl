@@ -7,7 +7,7 @@ behaviour_info(callbacks) -> [
 	{info, 2}, 
 	{tags, 2}, 
 	{branches, 2},
-	{download_package, 3}];
+	{download_package, 2}];
 behaviour_info(_) -> undefined.
 
 %% package_deps(User, ProjectName, Vsn) -> Deps
