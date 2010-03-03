@@ -1,0 +1,72 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+
+-include_lib("kernel/include/file.hrl").
+
+%% shamelessly stolen from rebar
+main(Args) ->
+    %% Get a string repr of build time
+    Built = build_time(),
+
+    %% Check for force=1 flag to force a rebuild
+    case lists:member("force=1", Args) of
+        true ->
+            [file:delete(Beam) || Beam <- filelib:wildcard("ebin/*.beam")],
+            ok;
+        false ->
+            ok
+    end,
+    
+    %% Compile all src/*.erl to ebin
+    case make:files(filelib:wildcard("src/*.erl"), [{outdir, "ebin"}, {i, "include"},
+                                                    {d, 'BUILD_TIME', Built}]) of
+        up_to_date ->
+            ok;
+        error ->
+            io:format("Failed to compile epm files!\n"),
+            halt(1)
+    end,
+
+    %% Make sure file:consult can parse the .app file
+    case file:consult("ebin/epm.app") of
+        {ok, _} ->
+            ok;
+        {error, Reason} ->
+            io:format("Invalid syntax in ebin/epm.app: ~p\n", [Reason]),
+            halt(1)
+    end,
+
+    %% Add ebin/ to our path
+    true = code:add_path("ebin"),
+
+    %% Construct the archive of everything in ebin/ dir -- put it on the
+    %% top-level of the zip file so that code loading works properly.
+    Files = filelib:wildcard("*", "ebin"),
+    case zip:create("mem", Files, [{cwd, "ebin"}, memory]) of
+        {ok, {"mem", ZipBin}} ->
+            %% Archive was successfully created. Prefix that binary with our
+            %% header and write to "epm" file
+            Script = <<"#!/usr/bin/env escript\n", ZipBin/binary>>,
+            case file:write_file("epm", Script) of
+                ok ->
+                    ok;
+                {error, WriteError} ->
+                    io:format("Failed to write epm script: ~p\n", [WriteError]),
+                    halt(1)
+            end;
+        {error, ZipError} ->
+            io:format("Failed to construct epm script archive: ~p\n", [ZipError]),
+            halt(1)
+    end,
+
+    %% Finally, update executable perms for our script
+    file:write_file_info("epm", #file_info{mode=(8#00100)}),
+
+    %% Add a helpful message
+    io:format("Successfully generated an epm executable in the current working directory~n").
+                
+build_time() ->
+    {{Y, M, D}, {H, Min, S}} = calendar:now_to_universal_time(now()),
+    lists:flatten(io_lib:format("~4..0w~2..0w~2..0w_~2..0w~2..0w~2..0w", [Y, M, D, H, Min, S])).
+            
+
