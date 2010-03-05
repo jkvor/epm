@@ -56,6 +56,27 @@ execute(GlobalConfig, ["remove" | Args]) ->
             end
         end;
 
+execute(GlobalConfig, ["update" | Args]) ->
+    {Packages, Flags} = collect_args(update, Args),
+    put(verbose, lists:member(verbose, Flags)),
+    Installed = installed_packages(Packages),
+    case Installed of
+		[] ->
+		    io:format("- nothing to update~n");
+		_ ->
+			io:format("===============================~n"),
+			io:format("Update the following packages?~n"),
+			io:format("===============================~n"),
+			[io:format("    + ~s-~s-~s~n", [U,N,V]) || #package{user=U, name=N, vsn=V} <- Installed],
+            io:format("~n([y]/n) "),
+            case io:get_chars("", 1) of
+                C when C == "y"; C == "\n" -> 
+                    io:format("~n"),
+                    [update_package(GlobalConfig, Package) || Package <- Installed];
+                _ -> ok
+            end
+	end;
+	
 execute(GlobalConfig, ["info" | Args]) ->
 	{Packages, _Flags} = collect_args(info, Args),
 	{Installed, NotInstalled} = filter_installed_packages(Packages),
@@ -390,6 +411,29 @@ remove_package(_GlobalConfig, #package{user=User, name=Name, vsn=Vsn, install_di
     epm_util:print_cmd_output("~s~n", [RemoveCmd]),
     epm_util:do_cmd(RemoveCmd, fail),
     dets:delete(epm_index, {User,Name,Vsn}).
+
+%% -----------------------------------------------------------------------------
+%% UPDATE
+%% -----------------------------------------------------------------------------
+update_package(GlobalConfig, Package) ->
+	Repo = Package#package.repo,
+    Vsn = Package#package.vsn,
+	%% switch to build home dir
+	epm_util:set_cwd_build_home(GlobalConfig),
+	
+	%% download correct version of package
+	LocalProjectDir = apply(Repo#repository.api_module, download_package, [Repo, Vsn]),
+	
+	%% switch to project dir
+	epm_util:set_cwd_build_home(GlobalConfig),
+	epm_util:set_cwd(LocalProjectDir),
+	
+	%% build/install project
+	_InstallDir = build_project(GlobalConfig, Package),
+	
+	%% switch to build home dir and delete cloned project
+	epm_util:set_cwd_build_home(GlobalConfig),
+	epm_util:del_dir(LocalProjectDir).
 
 %% -----------------------------------------------------------------------------
 %% Read vsn
