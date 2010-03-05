@@ -132,7 +132,10 @@ execute(_GlobalConfig, ["list" | _Args]) ->
 					Count+1
 				end, 0, lists:reverse(Installed))
 	end;
-	
+
+execute(_GlobalConfig, ["latest" | _Args]) ->
+	update_epm();
+		
 execute(_, _) ->
     io:format("Usage: epm commands~n~n"),
     io:format("    install [<user>/]<project> {project options}, ... {global options}~n"),
@@ -435,6 +438,32 @@ update_package(GlobalConfig, Package) ->
 	epm_util:set_cwd_build_home(GlobalConfig),
 	epm_util:del_dir(LocalProjectDir).
 
+%% -----------------------------------------------------------------------------
+%% Replace epm script with most recent
+%% -----------------------------------------------------------------------------
+update_epm() ->
+	File = 
+		case os:find_executable("epm") of
+			false ->
+				case filelib:is_regular("epm") of
+					true -> "./epm";
+					fasle -> exit("failed to find epm executable to replace")
+				end;
+			F -> F
+		end,
+	Url = "http://github.com/JacobVorreuter/epm/raw/master/epm",
+	case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+		{ok, {{_, 200, _}, _, Body}} ->
+			case file:write_file(File, Body) of
+				ok ->
+					io:format("+ updated epm (~s) to latest version~n", [File]);
+				{error, Reason} ->
+					exit(lists:flatten(io_lib:format("failed to overwrite epm executable ~s: ~p~n", [File, Reason])))
+			end;
+		_ ->
+			exit("failed to download latest version of epm")
+	end.
+		
 %% -----------------------------------------------------------------------------
 %% Read vsn
 %% -----------------------------------------------------------------------------    
