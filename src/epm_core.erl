@@ -56,9 +56,40 @@ execute(GlobalConfig, ["remove" | Args]) ->
             end
         end;
 
-execute(_GlobalConfig, ["search" | Args]) ->
+execute(GlobalConfig, ["info" | Args]) ->
+	{Packages, _Flags} = collect_args(info, Args),
+	{Installed, NotInstalled} = filter_installed_packages(Packages),
+    case Installed of
+		[] -> ok;
+		_ ->
+			io:format("===============================~n"),
+			io:format("INSTALLED~n"),
+			io:format("===============================~n"),
+	
+			lists:foldl(
+				fun(Package, Count) ->
+					case Count of
+						0 -> ok;
+						_ -> io:format("~n")
+					end,
+					write_installed_package_info(Package),
+					Count+1
+				end, 0, lists:reverse(Installed))
+       	end,
+       	
+       	case NotInstalled of
+       		[] -> ok;
+       		_ ->
+       			case Installed of
+       				[] -> ok;
+       				_ -> io:format("~n")
+       			end,
+       			write_not_installed_package_info(GlobalConfig, NotInstalled, true)
+       	end;
+	
+execute(GlobalConfig, ["search" | Args]) ->
     {Packages, _Flags} = collect_args(search, Args),
-    write_not_installed_package_info(lists:reverse(Packages));
+    write_not_installed_package_info(GlobalConfig, lists:reverse(Packages));
         
 execute(_GlobalConfig, ["list" | _Args]) ->
     Installed = installed_packages(),
@@ -229,18 +260,6 @@ installed_packages1([Package|Tail], Dict) ->
         end,
    installed_packages1(Tail, Dict1). 
     
-installed_app_vsn(#package{user=User, name=Name, vsn=Vsn}) ->
-    case dets:lookup(epm_index, {User, Name, Vsn}) of
-        [{{_,Name,_}, Package}] -> 
-            case file:consult(Package#package.install_dir ++ "/ebin/" ++ Name ++ ".app") of
-                {ok, [{application,_,Props}]} ->
-                    proplists:get_value(vsn, Props);
-                {error, _} ->
-                    undefined
-            end;
-        _ -> undefined
-    end.
-
 dependant_installed_packages(Package) ->
     dependant_installed_packages(Package, [], dets:match(epm_index, '$1')).
 
@@ -282,79 +301,56 @@ write_installed_package_info(Package) ->
     end.
 
 write_not_installed_package_info(GlobalConfig, Packages) ->
+	write_not_installed_package_info(GlobalConfig, Packages, false).
+	
+write_not_installed_package_info(GlobalConfig, Packages, IsExact) ->
     RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, [github_api]),
-	write_not_installed_package_info1(Packages, RepoPlugins, false).
+	write_not_installed_package_info1(Packages, RepoPlugins, IsExact).
 	
 write_not_installed_package_info1(Packages, RepoPlugins, IsExact) ->
     case fetch_not_installed_package_info(Packages, RepoPlugins, [], IsExact) of
         [] -> 
             io:format("- not found~n");
-        Results ->
+        Repos ->
             io:format("===============================~n"),
         	io:format("AVAILABLE~n"),
         	io:format("===============================~n"),
-        	[write_not_installed_package_info1(User, ProjectName, Vsn, Repos) || {{User, ProjectName, Vsn}, Repos} <- Results]
+        	lists:foldl(
+				fun(Repo, Count) ->
+					Tags = apply(Repo#repository.api_module, tags, [Repo#repository.owner, Repo#repository.name]),
+					Branches = apply(Repo#repository.api_module, branches, [Repo#repository.owner, Repo#repository.name]),
+					case Count of
+						0 -> ok;
+						_ -> io:format("~n")
+					end,
+					[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
+						{"name", Repo#repository.name},
+						{"owner", Repo#repository.owner},
+						{"followers", Repo#repository.followers},
+						{"pushed", Repo#repository.pushed},
+						{"homepage", Repo#repository.homepage},
+						{"description", Repo#repository.description}
+					]],
+					if 
+					    Tags =/= [] -> 
+					        io:format("  tags:~n"),
+					        [io:format("    ~s~n", [Tag]) || Tag <- Tags];
+					    true -> ok
+					end,
+					if 
+					    Branches =/= [] -> 
+				            io:format("  branches:~n"),
+				            [io:format("    ~s~n", [Branch]) || Branch <- Branches];
+					    true -> ok 
+					end,
+					Count+1
+				end, 0, Repos)
     end.
-    
-write_not_installed_package_info1(_User, _ProjectName, _Vsn, Repos) ->
-	lists:foldl(
-		fun(Repo, Count) ->
-			Tags = repos_tags(Repo#repository.owner, Repo#repository.name),
-			Branches = repos_branches(Repo#repository.owner, Repo#repository.name),
-			case Count of
-				0 -> ok;
-				_ -> io:format("~n")
-			end,
-			[io:format("  ~s: ~s~n", [Field, if Value==undefined -> ""; true -> Value end]) || {Field, Value} <- [
-				{"name", Repo#repository.name},
-				{"owner", Repo#repository.owner},
-				{"followers", Repo#repository.followers},
-				{"pushed", Repo#repository.pushed},
-				{"homepage", Repo#repository.homepage},
-				{"description", Repo#repository.description}
-			]],
-			if 
-			    Tags =/= [] -> 
-			        io:format("  tags:~n"),
-			        [io:format("    ~s~n", [K]) || {K,_V} <- Tags];
-			    true -> ok
-			end,
-			if 
-			    Branches =/= [] -> 
-		            io:format("  branches:~n"),
-		            [io:format("    ~s~n", [K]) || {K,_V} <- Branches];
-			    true -> ok 
-			end,
-			Count+1
-		end, 0, Repos).
 
 fetch_not_installed_package_info([], _, Acc, _) -> Acc;
-fetch_not_installed_package_info([#package{user=User,name=ProjectName,vsn=Vsn,}|Tail], RepoPlugins, Acc, IsExact) ->
+fetch_not_installed_package_info([#package{user=User,name=ProjectName}|Tail], RepoPlugins, Acc, IsExact) ->
     Repos = retrieve_remote_repos(RepoPlugins, User, ProjectName, IsExact),
-    Acc1 = 
-        case User of
-    		none -> 
-    		    case apply(Repo#repository.api_module, search, [ProjectName]) of
-    		        [] -> 
-						Acc;
-    		        Repos when is_list(Repos), IsExact == true -> 
-						Repos1 = [R || R <- Repos, R#repository.name==ProjectName],
-						case Repos1 of
-							[] -> Acc;
-							_ -> [Repos1|Acc]
-						end;
-					Repos when is_list(Repos) ->
-						[Repos|Acc];
-    		        _ -> 
-						Acc
-    		    end;
-    		_ -> 
-    			case apply(Repo#repository.api_module, info, [User, ProjectName]) of
-    				#repository{}=R -> [{{User, ProjectName, Vsn}, [R]}|Acc];
-    				_ -> Acc
-    			end
-    	end,
-    fetch_not_installed_package_info(Tail, Acc1, IsExact).
+    fetch_not_installed_package_info(Tail, RepoPlugins, lists:append(Acc, Repos), IsExact).
 		           
 %% -----------------------------------------------------------------------------
 %% INSTALL
@@ -556,9 +552,9 @@ filter_installed_packages([], Installed, NotInstalled) ->
     {lists:reverse(Installed), NotInstalled};
     
 filter_installed_packages([Package|Tail], Installed, NotInstalled) ->
-    case installed_app_vsn(Package) of
-        undefined -> filter_installed_packages(Tail, Installed, [Package|NotInstalled]);
-        AppVsn -> filter_installed_packages(Tail, [Package#package{app_vsn=AppVsn}|Installed], NotInstalled)
+	case local_package_info(Package) of
+        [] -> filter_installed_packages(Tail, Installed, [Package|NotInstalled]);
+        [P|_] -> filter_installed_packages(Tail, [P|Installed], NotInstalled)
     end.
 
 retrieve_remote_repo([], _, ProjectName) ->
@@ -590,7 +586,7 @@ retrieve_remote_repo([Module|Tail], User, ProjectName) ->
 retrieve_remote_repos(Modules, User, ProjectName, IsExact) ->
     retrieve_remote_repos(Modules, User, ProjectName, IsExact, []).
     
-retrieve_remote_repos([], _, ProjectName, _, Acc) -> Acc;
+retrieve_remote_repos([], _, _, _, Acc) -> Acc;
     
 retrieve_remote_repos([Module|Tail], none, ProjectName, IsExact, Acc) ->	
     case apply(Module, search, [ProjectName]) of

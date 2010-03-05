@@ -5,15 +5,6 @@
 main(Args) ->
     io:format("epm v0.1.0, 2010~n~n"),
     
-    %% Make sure the caller is running w/ r13b03
-    case erlang:system_info(version) < "5.7.4" of
-        true ->
-            io:format("EPM requires at least erts 5.7.4; this VM is using ~s\n", [erlang:system_info(version)]),
-            halt(1);
-        false ->
-            ok
-    end,
-
     inets:start(),
 
 	case (catch main1(Args)) of
