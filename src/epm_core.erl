@@ -135,6 +135,30 @@ execute(_GlobalConfig, ["list" | _Args]) ->
 
 execute(_GlobalConfig, ["latest" | _Args]) ->
 	update_epm();
+	
+execute(GlobalConfig, ["config" | Args]) ->
+	{_Packages, Flags} = collect_args(config, Args),
+	case Flags of
+		[] ->
+			print_config_values(GlobalConfig);
+		[get] ->
+			print_config_values(GlobalConfig);
+		_ ->
+			Config2 = lists:foldl(
+				fun(Flag, Config) ->
+					case Flag of
+						{set, [K,V]} ->
+							K1 = list_to_atom(K), 
+							[{K1, V}|proplists:delete(K1, Config)];
+						{remove, K} ->
+							K1 = list_to_atom(K),
+							proplists:delete(K1, Config);
+						_ ->
+							Config
+					end
+				end, GlobalConfig, Flags),
+			write_config_file(Config2)
+	end;
 		
 execute(_, _) ->
     io:format("Usage: epm commands~n~n"),
@@ -169,7 +193,12 @@ execute(_, _) ->
     io:format("    info [<user>/]<project>, ...~n~n"),
     io:format("    search <project>, ...~n~n"),
     io:format("    list~n~n"),
-   	io:format("    latest~n"),
+   	io:format("    latest~n~n"),
+   	io:format("    config {options}~n"),
+	io:format("        options:~n"),
+	io:format("             --get (default)~n"),
+	io:format("             --set key value~n"),
+	io:format("             --remove key~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
@@ -190,19 +219,37 @@ collect_args(Target, [Arg | Rest], Packages, Flags) ->
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
 			collect_args(Target, Rest, [#package{user=User, name=ProjectName}|Packages], Flags);
-		{Tag, true} -> %% tag with trailing value
-			[Value | Rest1] = Rest, %% pop trailing value from front of remaining args
-			[#package{args=Args}=Package|OtherPackages] = Packages, %% this tag applies to the last project on the stack
-			Vsn = if
-				Tag==tag; Tag==branch; Tag==sha -> Value;
-				true -> Package#package.vsn
+		{Type, Tag, 0} ->	 %% tag with no trailing value
+			case Type of
+				project ->
+					[#package{args=Args}=Package|OtherPackages] = Packages,
+					collect_args(Target, Rest, [Package#package{args=Args ++ [Tag]}|OtherPackages], Flags);
+				global ->
+					collect_args(Target, Rest, Packages, [Tag|Flags])
+			end;
+		{Type, Tag, NumVals} when is_integer(NumVals) -> %% tag with trailing value(s)
+			if
+				length(Rest) < NumVals ->
+					exit("poorly formatted command");
+				true -> ok
 			end,
-			collect_args(Target, Rest1, [Package#package{vsn=Vsn, args=Args ++ [{Tag, Value}]}|OtherPackages], Flags);
-		{Tag, false} ->	 %% tag with no trailing value
-			[#package{args=Args}=Package|OtherPackages] = Packages,
-			collect_args(Target, Rest, [Package#package{args=Args ++ [Tag]}|OtherPackages], Flags);
-		Flag ->
-			collect_args(Target, Rest, Packages, [Flag|Flags])
+			{Vals, Rest1} = lists:split(NumVals, Rest),
+			Vals1 = 
+				case Vals of
+					[V] -> V;
+					_ -> Vals
+				end,
+			case Type of
+				project ->
+					[#package{args=Args}=Package|OtherPackages] = Packages, %% this tag applies to the last project on the stack
+					Vsn = if
+						Tag==tag; Tag==branch; Tag==sha -> Vals1;
+						true -> Package#package.vsn
+					end,
+					collect_args(Target, Rest1, [Package#package{vsn=Vsn, args=Args ++ [{Tag, Vals1}]}|OtherPackages], Flags);
+				global ->
+					collect_args(Target, Rest1, Packages, [{Tag, Vals1}|Flags])
+			end	
 	end.
 
 %% @spec parse_tag(Target, Arg) -> {Tag, HasValue} | undefined
@@ -210,21 +257,24 @@ collect_args(Target, [Arg | Rest], Packages, Flags) ->
 %%		 Arg = string()
 %%		 Tag = atom()
 %%		 HasValue = bool()
-parse_tag(install, "--tag") -> {tag, true};
-parse_tag(install, "--branch") -> {branch, true};
-parse_tag(install, "--sha") -> {sha, true};
-parse_tag(install, "--prebuild-command") -> {prebuild_command, true};
-parse_tag(install, "--build-command") -> {build_command, true};
-parse_tag(install, "--test-command") -> {test_command, true};
+parse_tag(install, "--tag") -> {project, tag, 1};
+parse_tag(install, "--branch") -> {project, branch, 1};
+parse_tag(install, "--sha") -> {project, sha, 1};
+parse_tag(install, "--prebuild-command") -> {project, prebuild_command, 1};
+parse_tag(install, "--build-command") -> {project, build_command, 1};
+parse_tag(install, "--test-command") -> {project, test_command, 1};
 
-parse_tag(info, "--tag") -> {tag, true};
-parse_tag(info, "--branch") -> {branch, true};
-parse_tag(info, "--sha") -> {sha, true};
+parse_tag(info, "--tag") -> {project, tag, 1};
+parse_tag(info, "--branch") -> {project, branch, 1};
+parse_tag(info, "--sha") -> {project, sha, 1};
 
-parse_tag(_, "--with-deps") -> {with_deps, false};
-parse_tag(_, "--without-deps") -> {without_deps, false};
+parse_tag(_, "--with-deps") -> {project, with_deps, 0};
+parse_tag(_, "--without-deps") -> {project, without_deps, 0};
 
-parse_tag(_, "--verbose") -> verbose;
+parse_tag(config, "--get") -> {global, get, 0};
+parse_tag(config, "--set") -> {global, set, 2};
+parse_tag(config, "--remove") -> {global, remove, 1};
+parse_tag(_, "--verbose") -> {global, verbose, 0};
 
 parse_tag(_, _) -> undefined.
 
@@ -463,7 +513,39 @@ update_epm() ->
 		_ ->
 			exit("failed to download latest version of epm")
 	end.
-		
+
+%% -----------------------------------------------------------------------------
+%% Global Config
+%% -----------------------------------------------------------------------------    		
+print_config_values(GlobalConfig) ->
+	[io:format("~p\t\t~p~n", [K,V]) || {K,V} <- GlobalConfig].
+	
+write_config_file(GlobalConfig) ->
+	FileLoc = get(global_config),
+	case file:open(FileLoc, [write]) of
+		{ok, IoDevice} ->
+			io:format(IoDevice, "[~n", []),
+			lists:foldl(
+				fun({Key, Val}, Count) ->
+					if
+						Count == 0 -> ok;
+						true ->
+							io:format(IoDevice, ",~n", [])
+					end,
+					case {Key,Val} of
+						{repo_plugins, [C|_]} when is_integer(C) ->
+							io:format(IoDevice, "  {~p, ~s}", [Key, Val]);
+						_ ->
+							io:format(IoDevice, "  {~p, ~p}", [Key, Val])
+					end,
+					Count+1
+				end, 0, GlobalConfig),
+			io:format(IoDevice, "~n].~n", []),
+			io:format("+ updated .epm config~n");
+		{error, Reason} ->
+			?EXIT("failed to update .epm config (~s): ~p", [FileLoc, Reason])
+	end.
+
 %% -----------------------------------------------------------------------------
 %% Read vsn
 %% -----------------------------------------------------------------------------    

@@ -20,49 +20,23 @@ main(Args) ->
 	io:format("~n").
 	
 main1(Args) ->	
-	Home = home_dir(),
-	EpmHome = epm_home_dir(Home),
+	Home = epm_util:home_dir(),
+	EpmHome = epm_util:epm_home_dir(Home),
 	
-	open_dets_table(EpmHome),
+	epm_util:open_dets_table(EpmHome),
 		
 	%% consult global .epm config file in home directory
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
-		{ok, [GlobalConfig], _} ->
+		{ok, [GlobalConfig], FileLoc} ->
+			put(global_config, FileLoc),
 		    case proplists:get_value(install_dir, GlobalConfig) of
 		        undefined -> ok;
 		        InstallDir -> epm_util:add_to_path(InstallDir)
 		    end,
 			epm_core:execute(GlobalConfig, Args);
 		{error, enoent} ->
+			put(global_config, filename:join([Home, ".epm"])),
 			epm_core:execute([], Args);
 		{error, Reason} ->
 			?EXIT("failed to read epm global config: ~p", [Reason])
-	end.
-	
-home_dir() ->
-    case init:get_argument(home) of
-		{ok, [[H]]} -> [H];
-		_ -> []
-	end.
-	
-epm_home_dir(Home) ->
-    EPM = filename:join([Home, "epm"]),
-    case filelib:is_dir(EPM) of
-        true -> EPM;
-        false ->
-            case file:make_dir(EPM) of
-                ok -> EPM;
-                {error, Reason} ->
-                    ?EXIT("failed to create epm home directory (~s): ~p", [EPM, Reason])
-            end
-    end.
-    
-open_dets_table(EpmHome) ->
-    File = filename:join([EpmHome, "epm_index"]),
-    case dets:open_file(epm_index, [{type, set}, {file, File}]) of
-	    {ok, _} -> ok;
-	    {error, {file_error,_,eacces}} ->
-            ?EXIT("insufficient access to epm index file: ~s", [File]);
-	    {error, Reason} ->
-	        ?EXIT("failed to open epm index file (~s): ~p", [File, Reason])
 	end.
