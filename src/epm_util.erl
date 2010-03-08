@@ -20,10 +20,37 @@ epm_home_dir(Home) ->
             end
     end.
     
-open_dets_table(EpmHome) ->
+open_dets_table(Home, EpmHome) ->
     File = filename:join([EpmHome, "epm_index"]),
+
+	%% TODO: delete this later
+	Insert = 
+		case filelib:is_regular(filename:join([Home, "epm_index"])) of
+			true ->
+				case dets:open_file(epm_index, [{type, set}, {file, filename:join([Home, "epm_index"])}]) of
+					{ok, _} ->
+						Rows = dets:match(epm_index, '$1'),
+						dets:close(epm_index),
+						
+						[{{User,Name,Vsn}, #package{
+							user = User,
+							name = Name,
+							vsn = Vsn,
+							install_dir = InstallDir,
+							deps = Deps,
+							repo = github_api:info(User, Name)
+						 }} || [{{User,Name,Vsn},InstallDir,Deps}] <- Rows];
+					_ -> []
+				end;
+			false -> []
+		end,
+
     case dets:open_file(epm_index, [{type, set}, {file, File}]) of
-	    {ok, _} -> ok;
+	    {ok, _} -> 
+			%% TODO: delete this later
+			[dets:insert(epm_index, I) || I <- Insert],
+			file:delete(filename:join([Home, "epm_index"])),
+			ok;
 	    {error, {file_error,_,eacces}} ->
             ?EXIT("insufficient access to epm index file: ~s", [File]);
 	    {error, Reason} ->
