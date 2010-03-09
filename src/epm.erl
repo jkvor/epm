@@ -3,7 +3,9 @@
 -include("epm.hrl").
 
 main(Args) ->
-    io:format("epm v0.1.0, 2010~n~n"),
+	put(vsn, "0.1.1"),
+	
+    io:format("epm v~s, 2010~n~n", [get(vsn)]),
     
     inets:start(),
 
@@ -32,7 +34,14 @@ main1(Args) ->
 			put(global_config, FileLoc),
 		    
 			case proplists:get_value(install_dir, GlobalConfig) of
-		        undefined -> ok;
+		        undefined -> 
+					io:format("################ Warning ################~n"),
+					io:format("You have not specified a value for ~n"),
+					io:format("install_dir in your .epm config file. The~n"),
+					io:format("current working directory will be used.~n~n"),
+					io:format("run `epm config --set install_dir <path>`~n"),
+					io:format("#########################################~n~n"),
+					ok;
 		        InstallDir -> epm_util:add_to_path(InstallDir)
 		    end,
 			
