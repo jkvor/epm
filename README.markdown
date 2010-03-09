@@ -13,52 +13,64 @@
 ### Usage
 
 	install [<user>/]<project> {project options}, ... {global options}
-        project options:
-             --tag <tag>
-             --branch <branch>
-             --sha <sha>
-             --with-deps (default)
-             --without-deps
-             --prebuild-command <cmd>
-             --build-command <cmd>
-             --test-command <cmd>
-        global options:
-             --verbose
+	    project options:
+	         --tag <tag>
+	         --branch <branch>
+	         --sha <sha>
+	         --with-deps (default)
+	         --without-deps
+	         --prebuild-command <cmd>
+	         --build-command <cmd>
+	         --test-command <cmd>
+	    global options:
+	         --verbose
 
-    remove [<user>/]<project> {project options}, ... {global options}
-        project options:
-             --tag <tag>
-             --branch <branch>
-             --sha <sha>
-             --with-deps
-             --without-deps (default)
-        global options:
-             --verbose
+	remove [<user>/]<project> {project options}, ... {global options}
+	    project options:
+	         --tag <tag>
+	         --branch <branch>
+	         --sha <sha>
+	    global options:
+	         --verbose
 
-    update [<user>/]<project> {project options}, ... {global options}
-        project options:
-             --tag <tag>
-             --branch <branch>
-             --sha <sha>
-             --with-deps
-             --without-deps (default)
-        global options:
-             --verbose
+	update [<user>/]<project> {project options}, ... {global options}
+	    project options:
+	         --tag <tag>
+	         --branch <branch>
+	         --sha <sha>
+	         --with-deps
+	         --without-deps (default)
+	    global options:
+	         --verbose
 
-    info [<user>/]<project>, ...
+	info [<user>/]<project>, ...
 
-    search <project>, ...
+	search <project>, ...
 
-    list
+	list
 
 	latest
+
+	config {options}
+	    options:
+	         --get (default)
+	         --set key value
+	         --remove key
+
 	
 ### Do it
 
+tell epm where to install packages
+
+	jvorreuter$ epm config --set install_dir /Users/jvorreuter/dev
+	epm v0.1.1, 2010
+
+	+ updated .epm config
+	
 search for an Erlang app  
 
 	jvorreuter$ ./epm search excavator
-	epm v0.1.0, 2010
+	epm v0.1.1, 2010
 
 	===============================
 	AVAILABLE
@@ -77,7 +89,7 @@ search for an Erlang app
 install that app that you wanted (its dependencies will be installed too)  
 
 	jvorreuter$ ./epm install excavator
-	epm v0.1.0, 2010
+	epm v0.1.1, 2010
 
 	===============================
 	Install the following packages?
@@ -113,7 +125,7 @@ install that app that you wanted (its dependencies will be installed too)
 get some info about that app you just installed  
 
 	jvorreuter$ ./epm info excavator
-	epm v0.1.0, 2010
+	epm v0.1.1, 2010
 
 	===============================
 	INSTALLED
@@ -134,7 +146,7 @@ get some info about that app you just installed
 how 'bout a list of all apps I've installed?  
 
 	jvorreuter$ ./epm list
-	epm v0.1.0, 2010
+	epm v0.1.1, 2010
 
 	===============================
 	INSTALLED
@@ -192,7 +204,7 @@ how 'bout a list of all apps I've installed?
 what have I done? I must remove that terrible app. Its dependencies can stay though
 
 	jvorreuter$ ./epm remove excavator
-	epm v0.1.0, 2010
+	epm v0.1.1, 2010
 
 	===============================
 	Remove the following packages?
