@@ -588,8 +588,23 @@ prebuild1(ProjectName, PrebuildCmd) ->
 	epm_util:do_cmd(PrebuildCmd, fail).
 	
 build(ProjectName, Config, undefined) ->
-    BuildCmd = proplists:get_value(build_command, Config, "make"),
-	build1(ProjectName, BuildCmd);
+	case proplists:get_value(build_command, Config) of
+		undefined ->
+			case filelib:is_regular("Makefile") of
+				true ->
+					build1(ProjectName, "make");
+				false ->
+					case os:find_executable("rebar") of
+						false ->
+							exit("failed to build package: No Makefile and rebar not installed");
+						RebarExec ->
+							io:format("+ compiling with rebar...~n"),
+							build1(ProjectName, RebarExec ++ " compile")
+					end
+			end;
+		Cmd ->
+			build1(ProjectName, Cmd)
+	end;
 build(ProjectName, _Config, BuildCmd) ->
 	build1(ProjectName, BuildCmd).	
 
