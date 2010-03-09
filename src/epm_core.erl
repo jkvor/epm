@@ -5,8 +5,8 @@
 
 -define(DEFAULT_API_MODULES, [github_api]).
 
-execute(GlobalConfig, ["install" | Args]) ->
-    {Packages, Flags} = collect_args(install, Args),
+execute(GlobalConfig0, ["install" | Args]) ->
+    {GlobalConfig, Packages, Flags} = collect_args(install, Args, GlobalConfig0),
 	put(verbose, lists:member(verbose, Flags)),
 	Deps = package_dependencies(GlobalConfig, Packages),
 	{Installed, NotInstalled} = filter_installed_packages(Deps),
@@ -37,8 +37,8 @@ execute(GlobalConfig, ["install" | Args]) ->
             end
 	end;
 
-execute(GlobalConfig, ["remove" | Args]) ->
-	{Packages, Flags} = collect_args(remove, Args),
+execute(GlobalConfig0, ["remove" | Args]) ->
+	{GlobalConfig, Packages, Flags} = collect_args(remove, Args, GlobalConfig0),
 	put(verbose, lists:member(verbose, Flags)),
 	Installed = installed_packages(Packages),
     case Installed of
@@ -58,8 +58,8 @@ execute(GlobalConfig, ["remove" | Args]) ->
             end
         end;
 
-execute(GlobalConfig, ["update" | Args]) ->
-    {Packages, Flags} = collect_args(update, Args),
+execute(GlobalConfig0, ["update" | Args]) ->
+    {GlobalConfig, Packages, Flags} = collect_args(update, Args, GlobalConfig0),
     put(verbose, lists:member(verbose, Flags)),
     Installed = installed_packages(Packages),
     case Installed of
@@ -79,8 +79,8 @@ execute(GlobalConfig, ["update" | Args]) ->
             end
 	end;
 	
-execute(GlobalConfig, ["info" | Args]) ->
-	{Packages, _Flags} = collect_args(info, Args),
+execute(GlobalConfig0, ["info" | Args]) ->
+	{GlobalConfig, Packages, _Flags} = collect_args(info, Args, GlobalConfig0),
 	{Installed, NotInstalled} = filter_installed_packages(Packages),
     case Installed of
 		[] -> ok;
@@ -110,8 +110,8 @@ execute(GlobalConfig, ["info" | Args]) ->
        			write_not_installed_package_info(GlobalConfig, NotInstalled, true)
        	end;
 	
-execute(GlobalConfig, ["search" | Args]) ->
-    {Packages, _Flags} = collect_args(search, Args),
+execute(GlobalConfig0, ["search" | Args]) ->
+    {GlobalConfig, Packages, _Flags} = collect_args(search, Args, GlobalConfig0),
     write_not_installed_package_info(GlobalConfig, lists:reverse(Packages));
         
 execute(_GlobalConfig, ["list" | _Args]) ->
@@ -138,8 +138,8 @@ execute(_GlobalConfig, ["list" | _Args]) ->
 execute(_GlobalConfig, ["latest" | _Args]) ->
 	update_epm();
 	
-execute(GlobalConfig, ["config" | Args]) ->
-	{_Packages, Flags} = collect_args(config, Args),
+execute(GlobalConfig0, ["config" | Args]) ->
+	{GlobalConfig, _Packages, Flags} = collect_args(config, Args, GlobalConfig0),
 	case Flags of
 		[] ->
 			print_config_values(GlobalConfig);
@@ -175,7 +175,8 @@ execute(_, _) ->
 	io:format("             --build-command <cmd>~n"),
 	io:format("             --test-command <cmd>~n"),
 	io:format("        global options:~n"),
-	io:format("             --verbose~n~n"),
+	io:format("             --verbose~n"),
+	io:format("             --config-set <key> <value>~n~n"),
     io:format("    remove [<user>/]<project> {project options}, ... {global options}~n"),
 	io:format("        project options:~n"),
 	io:format("             --tag <tag>~n"),
@@ -183,6 +184,7 @@ execute(_, _) ->
 	io:format("             --sha <sha>~n"),
 	io:format("        global options:~n"),
 	io:format("             --verbose~n~n"),
+	io:format("             --config-set <key> <value>~n~n"),	
     io:format("    update [<user>/]<project> {project options}, ... {global options}~n"),
 	io:format("        project options:~n"),
 	io:format("             --tag <tag>~n"),
@@ -192,42 +194,48 @@ execute(_, _) ->
 	io:format("             --without-deps (default)~n"),
 	io:format("        global options:~n"),
 	io:format("             --verbose~n~n"),
-    io:format("    info [<user>/]<project>, ...~n~n"),
-    io:format("    search <project>, ...~n~n"),
+	io:format("             --config-set <key> <value>~n~n"),
+    io:format("    info [<user>/]<project>, ... {global options}~n"),
+	io:format("        global options:~n"),
+	io:format("             --config-set <key> <value>~n~n"),	
+    io:format("    search <project>, ... {global options}~n"),
+	io:format("        global options:~n"),
+	io:format("             --config-set <key> <value>~n~n"),	
     io:format("    list~n~n"),
    	io:format("    latest~n~n"),
    	io:format("    config {options}~n"),
 	io:format("        options:~n"),
 	io:format("             --get (default)~n"),
-	io:format("             --set key value~n"),
-	io:format("             --remove key~n"),
+	io:format("             --set <key> <value>~n"),
+	io:format("             --remove <key>~n"),
     ok.
 
 %% -----------------------------------------------------------------------------
 %% parse input args
 %% -----------------------------------------------------------------------------
 
-%% collect_args(Target, Args) -> Results
+%% collect_args(Target, Args, GlobalConfig) -> Results
 %%   Target = atom()
 %%	 Args = [string()]
+%%`  GlobalConfig = list()
 %%   Results = {[package(), Flags]}
 %%	 Flags = [atom()]
-collect_args(Target, Args) -> 
-    collect_args(Target, Args, [], []).
-collect_args(_, [], Packages, Flags) -> 
-    {lists:reverse(Packages), lists:reverse(Flags)};
-collect_args(Target, [Arg | Rest], Packages, Flags) ->
+collect_args(Target, Args, GlobalConfig) -> 
+    collect_args(Target, Args, GlobalConfig, [], []).
+collect_args(_, [], GlobalConfig, Packages, Flags) -> 
+    {GlobalConfig, lists:reverse(Packages), lists:reverse(Flags)};
+collect_args(Target, [Arg | Rest], GlobalConfig, Packages, Flags) ->
 	case parse_tag(Target, Arg) of
 		undefined -> %% if not a tag then must be a project name
 			{ProjectName, User} = split_package(Arg), %% split into user and project
-			collect_args(Target, Rest, [#package{user=User, name=ProjectName}|Packages], Flags);
+			collect_args(Target, Rest, GlobalConfig, [#package{user=User, name=ProjectName}|Packages], Flags);
 		{Type, Tag, 0} ->	 %% tag with no trailing value
 			case Type of
 				project ->
 					[#package{args=Args}=Package|OtherPackages] = Packages,
-					collect_args(Target, Rest, [Package#package{args=Args ++ [Tag]}|OtherPackages], Flags);
+					collect_args(Target, Rest, GlobalConfig, [Package#package{args=Args ++ [Tag]}|OtherPackages], Flags);
 				global ->
-					collect_args(Target, Rest, Packages, [Tag|Flags])
+					collect_args(Target, Rest, GlobalConfig, Packages, [Tag|Flags])
 			end;
 		{Type, Tag, NumVals} when is_integer(NumVals) -> %% tag with trailing value(s)
 			if
@@ -248,9 +256,21 @@ collect_args(Target, [Arg | Rest], Packages, Flags) ->
 						Tag==tag; Tag==branch; Tag==sha -> Vals1;
 						true -> Package#package.vsn
 					end,
-					collect_args(Target, Rest1, [Package#package{vsn=Vsn, args=Args ++ [{Tag, Vals1}]}|OtherPackages], Flags);
+					collect_args(Target, Rest1, GlobalConfig, [Package#package{vsn=Vsn, args=Args ++ [{Tag, Vals1}]}|OtherPackages], Flags);
 				global ->
-					collect_args(Target, Rest1, Packages, [{Tag, Vals1}|Flags])
+					GlobalConfig1 = 
+						if
+							Tag == config_set ->
+								[K,V1] = Vals1,
+								K1 = list_to_atom(K),
+								[case K1 of
+									repo_plugins -> {K1, epm_util:eval(V1++".")};
+									_ -> {K1, V1}
+								 end |proplists:delete(K1, GlobalConfig)];
+							true -> 
+								GlobalConfig
+						end,
+					collect_args(Target, Rest1, GlobalConfig1, Packages, [{Tag, Vals1}|Flags])
 			end	
 	end.
 
@@ -277,6 +297,7 @@ parse_tag(config, "--get") -> {global, get, 0};
 parse_tag(config, "--set") -> {global, set, 2};
 parse_tag(config, "--remove") -> {global, remove, 1};
 parse_tag(_, "--verbose") -> {global, verbose, 0};
+parse_tag(_, "--config-set") -> {global, config_set, 2};
 
 parse_tag(_, _) -> undefined.
 

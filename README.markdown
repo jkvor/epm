@@ -18,50 +18,58 @@
 ### Usage
 
 	install [<user>/]<project> {project options}, ... {global options}
-	    project options:
-	         --tag <tag>
-	         --branch <branch>
-	         --sha <sha>
-	         --with-deps (default)
-	         --without-deps
-	         --prebuild-command <cmd>
-	         --build-command <cmd>
-	         --test-command <cmd>
-	    global options:
-	         --verbose
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+             --with-deps (default)
+             --without-deps
+             --prebuild-command <cmd>
+             --build-command <cmd>
+             --test-command <cmd>
+        global options:
+             --verbose
+             --config-set <key> <value>
 
-	remove [<user>/]<project> {project options}, ... {global options}
-	    project options:
-	         --tag <tag>
-	         --branch <branch>
-	         --sha <sha>
-	    global options:
-	         --verbose
+    remove [<user>/]<project> {project options}, ... {global options}
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+        global options:
+             --verbose
 
-	update [<user>/]<project> {project options}, ... {global options}
-	    project options:
-	         --tag <tag>
-	         --branch <branch>
-	         --sha <sha>
-	         --with-deps
-	         --without-deps (default)
-	    global options:
-	         --verbose
+             --config-set <key> <value>
 
-	info [<user>/]<project>, ...
+    update [<user>/]<project> {project options}, ... {global options}
+        project options:
+             --tag <tag>
+             --branch <branch>
+             --sha <sha>
+             --with-deps
+             --without-deps (default)
+        global options:
+             --verbose
 
-	search <project>, ...
+             --config-set <key> <value>
 
-	list
+    info [<user>/]<project>, ... {global options}
+        global options:
+             --config-set <key> <value>
 
-	latest
+    search <project>, ... {global options}
+        global options:
+             --config-set <key> <value>
 
-	config {options}
-	    options:
-	         --get (default)
-	         --set key value
-	         --remove key
+    list
 
+    latest
+
+    config {options}
+        options:
+             --get (default)
+             --set <key> <value>
+             --remove <key>
 	
 ### Do it
 

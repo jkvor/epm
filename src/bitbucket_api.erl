@@ -56,7 +56,10 @@ package_deps(User, ProjectName, Vsn) ->
 search(ProjectName) ->
     case request_as_xml("http://bitbucket.org/repo/all/?name=" ++ ProjectName) of
 		{html,_,_}=Html ->
-			extract_repo_info_from_html(search_xml_for_repos(Html));
+			case search_xml_for_repos(Html) of
+				undefined -> [];
+				Repos -> extract_repo_info_from_html(Repos)
+			end;
 		Err ->
 			Err
 	end.
