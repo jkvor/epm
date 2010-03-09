@@ -6,6 +6,11 @@
 * a packaging and deployment tool
 * meant to handle non-Erlang dependencies
 
+### Install
+
+	curl "http://github.com/JacobVorreuter/epm/raw/master/epm" > epm
+	chmod +x epm
+	
 ### Read the blog post
 
 <http://www.jkvor.com/erlang-package-manager>
