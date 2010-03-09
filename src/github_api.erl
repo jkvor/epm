@@ -1,7 +1,7 @@
 -module(github_api).
 -behaviour(api_behavior).
 
--export([package_deps/3, search/1, info/2, tags/2, branches/2, download_package/2]).
+-export([package_deps/3, search/1, info/2, tags/2, branches/2, download_package/2, default_vsn/0]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("epm.hrl").
@@ -113,6 +113,8 @@ download_package(Repo, Vsn) ->
     Url = lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [Repo#repository.owner, Repo#repository.name, Vsn])),
 	epm_package:download_tarball(Repo, Url).
 			
+default_vsn() -> "master".
+
 repo_xml_field(FieldName, Repo) ->
     case xmerl_xpath:string("/repository/" ++ FieldName ++ "/text()", Repo) of
 		[#xmlText{value=Value}] -> Value;

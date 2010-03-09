@@ -3,6 +3,8 @@
 
 -include("epm.hrl").
 
+-define(DEFAULT_API_MODULES, [github_api]).
+
 execute(GlobalConfig, ["install" | Args]) ->
     {Packages, Flags} = collect_args(install, Args),
 	put(verbose, lists:member(verbose, Flags)),
@@ -378,7 +380,7 @@ write_not_installed_package_info(GlobalConfig, Packages) ->
 	write_not_installed_package_info(GlobalConfig, Packages, false).
 	
 write_not_installed_package_info(GlobalConfig, Packages, IsExact) ->
-    RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, [github_api]),
+    RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, ?DEFAULT_API_MODULES),
 	write_not_installed_package_info1(Packages, RepoPlugins, IsExact).
 	
 write_not_installed_package_info1(Packages, RepoPlugins, IsExact) ->
@@ -403,7 +405,8 @@ write_not_installed_package_info1(Packages, RepoPlugins, IsExact) ->
 						{"followers", Repo#repository.followers},
 						{"pushed", Repo#repository.pushed},
 						{"homepage", Repo#repository.homepage},
-						{"description", Repo#repository.description}
+						{"description", Repo#repository.description},
+						{"repo plugin", atom_to_list(Repo#repository.api_module)}
 					]],
 					if 
 					    Tags =/= [] -> 
@@ -549,9 +552,6 @@ write_config_file(GlobalConfig) ->
 %% -----------------------------------------------------------------------------
 %% Read vsn
 %% -----------------------------------------------------------------------------    
-read_vsn_from_args(Args) ->
-    read_vsn_from_args(Args, "master").
-    
 read_vsn_from_args([{tag, Tag}|_], _) -> Tag;
 read_vsn_from_args([{branch, Branch}|_], _) -> Branch;
 read_vsn_from_args([{sha, Sha}|_], _) -> Sha;
@@ -659,7 +659,7 @@ install(ProjectName, _Config, LibDir) ->
 %% Compile list of dependencies
 %% -----------------------------------------------------------------------------
 package_dependencies(GlobalConfig, Packages) ->
-    RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, [github_api]),
+    RepoPlugins = proplists:get_value(repo_plugins, GlobalConfig, ?DEFAULT_API_MODULES),
 	G = digraph:new(),
     UpdatedPackages = package_dependencies1(Packages, RepoPlugins, G, undefined, dict:new()),
     Deps = digraph_utils:topsort(G),
@@ -686,16 +686,22 @@ package_dependencies1([Package|Tail], RepoPlugins, G, Parent, Dict) ->
             end
     end,
     
+	PkgVsn =
+		case Package#package.vsn of
+			undefined -> apply(Repo#repository.api_module, default_vsn, []);	
+			_ -> Package#package.vsn
+		end,
+		
     {Deps, Dict1} = 
         case WithoutDeps of
             true ->
                 {[], Dict};
             false ->
-                Deps0 = apply(Repo#repository.api_module, package_deps, [Repo#repository.owner, Repo#repository.name, Package#package.vsn]),
+                Deps0 = apply(Repo#repository.api_module, package_deps, [Repo#repository.owner, Repo#repository.name, PkgVsn]),
                 lists:mapfoldl(
                     fun({Dep, Args}, TempDict) -> 
                         {DepName, DepUser} = split_package(Dep),
-                        DepVsn = read_vsn_from_args(Args),
+                        DepVsn = read_vsn_from_args(Args, apply(Repo#repository.api_module, default_vsn, [])),
                         Package0 = #package{
                             user = DepUser,
                             name = DepName,
@@ -710,6 +716,7 @@ package_dependencies1([Package|Tail], RepoPlugins, G, Parent, Dict) ->
     Package1 = Package#package{
         user = Repo#repository.owner, 
         name = Repo#repository.name,
+		vsn  = PkgVsn,
         deps = Deps,
         repo = Repo
     },

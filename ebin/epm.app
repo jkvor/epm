@@ -6,7 +6,10 @@
 			  epm_package,
               epm_util,
               api_behavior,
-              github_api ]},
+              github_api,
+ 			  bitbucket_api,
+ 			  yaws_html
+  ]},
   {registered, []},
   {applications, [kernel, stdlib, sasl]}
 ]}.

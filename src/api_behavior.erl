@@ -7,7 +7,8 @@ behaviour_info(callbacks) -> [
 	{info, 2}, 
 	{tags, 2}, 
 	{branches, 2},
-	{download_package, 2}];
+	{download_package, 2},
+	{default_vsn, 0} ];
 behaviour_info(_) -> undefined.
 
 %% package_deps(User, ProjectName, Vsn) -> Deps
@@ -44,3 +45,6 @@ behaviour_info(_) -> undefined.
 %%  ProjectName = string()
 %%  Vsn = string()
 %%  Result = 
+
+%% default_vsn() -> Result
+%%	Result = string()

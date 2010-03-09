@@ -9,7 +9,8 @@ download_tarball(Repo, Url) ->
     case http:request(get, {Url, [{"User-Agent", "EPM"}]}, [{timeout, 6000}], [{body_format, binary}]) of
         {ok,{{_,200,_},_,Bin}} ->
             case erl_tar:table({binary, Bin}, [compressed]) of
-                {ok,[_,TarName|_]} ->
+                {ok,Files} ->
+					TarName = tarname(Files), 
                     epm_util:del_dir(TarName),
                     epm_util:del_dir(LocalProjectDir),
                     case erl_tar:extract({binary, Bin}, [compressed]) of
@@ -28,3 +29,11 @@ download_tarball(Repo, Url) ->
             io:format("~p~n", [Error]),
             ?EXIT("failed to download ~s tarball: ~s", [Repo#repository.name, Url])
     end.
+
+tarname([]) ->
+	exit("package tarball does not contain proper folder structure");
+tarname([File|Tail]) ->
+	case re:run(File, "/") of
+		nomatch -> tarname(Tail);
+		_ -> hd(string:tokens(File, "/"))
+	end.
