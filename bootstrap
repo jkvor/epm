@@ -60,7 +60,7 @@ main(Args) ->
     end,
 
     %% Finally, update executable perms for our script
-    file:write_file_info("epm", #file_info{mode=(8#00100)}),
+    file:write_file_info("epm", #file_info{mode=(8#00700)}),
 
     %% Add a helpful message
     io:format("Successfully generated an epm executable in the current working directory~n").

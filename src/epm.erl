@@ -23,13 +23,12 @@ main(Args) ->
 	
 main1(Args) ->	
 	Home = epm_util:home_dir(),
+	EpmHome = epm_util:epm_home_dir(Home),
+	epm_util:open_dets_table(Home, EpmHome),
 	
 	%% consult global .epm config file in home directory
     case file:path_consult(["."] ++ Home ++ [code:root_dir()], ".epm") of
 		{ok, [GlobalConfig], FileLoc} ->
-			EpmHome = epm_util:epm_home_dir(Home),
-			
-			epm_util:open_dets_table(Home, EpmHome),
 			
 			put(global_config, FileLoc),
 		    
@@ -46,7 +45,11 @@ main1(Args) ->
 		    end,
 			
 			epm_core:execute(GlobalConfig, Args);
+		{ok, [], FileLoc} ->
+			put(global_config, FileLoc),
+			epm_core:execute([], Args);
 		{error, enoent} ->
+			file:write_file(filename:join([Home, ".epm"]), <<>>),
 			put(global_config, filename:join([Home, ".epm"])),
 			epm_core:execute([], Args);
 		{error, Reason} ->
