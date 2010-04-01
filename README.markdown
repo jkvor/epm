@@ -10,6 +10,11 @@
 
 	curl "http://github.com/JacobVorreuter/epm/raw/master/epm" > epm
 	chmod +x epm
+	sudo mv epm /usr/local/bin/
+	
+	epm config --set build_dir "/tmp"
+	epm config --set install_dir "/Users/jvorreuter/erl_libs"
+	
 	
 ### Read the blog post
 
