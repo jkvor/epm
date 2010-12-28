@@ -8,6 +8,7 @@ main(Args) ->
     io:format("epm v~s, 2010~n~n", [get(vsn)]),
     
     inets:start(),
+	lists:map(fun application:start/1, [crypto, public_key, ssl]),
 
 	case (catch main1(Args)) of
 		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
