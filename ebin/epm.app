@@ -11,5 +11,6 @@
  			  yaws_html
   ]},
   {registered, []},
-  {applications, [kernel, stdlib, sasl]}
+  {applications, [kernel, stdlib, sasl]},
+  {env, [{epm_fork, "hyperthunk"}]}
 ]}.
