@@ -8,7 +8,7 @@
 
 ### Install
 
-	curl "http://github.com/JacobVorreuter/epm/raw/master/epm" > epm
+	curl "https://github.com/JacobVorreuter/epm/raw/master/epm" > epm
 	chmod +x epm
 	sudo mv epm /usr/local/bin/
 	
