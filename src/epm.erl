@@ -7,9 +7,9 @@ main(Args) ->
 	
     io:format("epm v~s, 2010~n~n", [get(vsn)]),
     
-    inets:start(),
-	lists:map(fun application:start/1, [crypto, public_key, ssl, epm]),
-    inets:start(httpc, [{profile, epm}]),
+    application:load(sasl),
+    application:set_env(sasl, sasl_error_logger, false),
+	lists:map(fun application:start/1, [sasl, crypto, public_key, ssl, ibrowse, epm]),
 
 	case (catch main1(Args)) of
 		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
@@ -62,7 +62,8 @@ main1(Args) ->
 
 setup_connectivity(GlobalConfig) ->
     case proplists:get_value(proxy_host, GlobalConfig) of
-        undefined -> ok;
+        undefined -> 
+            epm_util:set_http_proxy(none, none);
         Host ->
             Port = proplists:get_value(proxy_port, GlobalConfig, "8080"),
             epm_util:set_http_proxy(Host, Port)

@@ -7,12 +7,12 @@ home_dir() ->
 		{ok, [[H]]} -> [H];
 		_ -> []
 	end.
-	
+
 
 set_http_proxy(Host, Port) when is_list(Port) ->
     set_http_proxy(Host, list_to_integer(Port));
 set_http_proxy(Host, Port) when is_integer(Port) ->
-    httpc:set_options([{proxy, {{Host, Port}, []}}, {verbose, debug}], epm).
+    put(proxy_host, Host), put(proxy_port, Port).
 
 set_net_timeout(Timeout) when is_list(Timeout) ->
     set_net_timeout(list_to_integer(Timeout));
@@ -21,11 +21,11 @@ set_net_timeout(Timeout) when is_integer(Timeout) ->
 
 request_as_str(Url, Host) ->
     case http_request(Url, Host) of
-        {ok, {{_, 200, _}, _, Body}} ->
+        {ok, "200", _, Body} ->
 	        Body;
-	    {ok, {{_, 403, _}, _, _}} ->
+	    {ok, "403", _, _} ->
 	        not_found;
-        {ok, {{_, 404, _}, _, _}} ->
+        {ok, "404", _, _} ->
 	        not_found;
 	    {ok, _} ->
 	        request_failed;
@@ -35,18 +35,43 @@ request_as_str(Url, Host) ->
 	end.
 
 http_request(Url, Host) ->
-    http_request(Url, Host, [], []).
+    http_request(Url, Host, []).
 
-http_request(Url, Host, HttpOpts, ClientOpts) ->
-    httpc:request(get, {Url, make_headers(Host)}, 
-                  default_http_options() ++ HttpOpts, ClientOpts, epm).
+http_request(Url, Host, ClientOpts) ->
+    Hdrs = make_headers(Host),
+    Opts = http_options(ClientOpts),
+    Timeout = get(net_timeout),
+    case ibrowse:send_req(Url, Hdrs, get, [], Opts, Timeout) of
+	    {ok, "302", Headers, _}=Response ->
+	        case proplists:get_value("Location", Headers) of
+	            undefined -> 
+	                Response;
+	            Location ->
+	                http_request(Location, undefined, ClientOpts)
+	        end;
+	    Other -> Other
+    end.
+
+http_options(ClientOpts) ->
+    proxy_options() ++ ClientOpts.
+
+proxy_options() ->
+    case get(proxy_host) of
+        none -> [];
+        Host ->
+            Port = case get(proxy_port) of
+                none -> 8080;
+                PortNum -> PortNum
+            end,
+            [{proxy_host, Host}, {proxy_port, Port}]
+    end.
 
 make_headers(undefined) ->
     [{"User-Agent", "EPM"}];
 make_headers(Host) ->
-    [{"Host", Host}, {"User-Agent", "EPM"}].
+    [{"User-Agent", "EPM"}, {"Host", Host}].
 
-default_http_options() -> 
+default_http_options() ->
     [{timeout, get(net_timeout)}].
 
 epm_home_dir(Home) ->
@@ -60,19 +85,19 @@ epm_home_dir(Home) ->
                     ?EXIT("failed to create epm home directory (~s): ~p", [EPM, Reason])
             end
     end.
-    
+
 open_dets_table(Home, EpmHome) ->
     File = filename:join([EpmHome, "epm_index"]),
 
 	%% TODO: delete this later
-	Insert = 
+	Insert =
 		case filelib:is_regular(filename:join([Home, "epm_index"])) of
 			true ->
 				case dets:open_file(epm_index, [{type, set}, {file, filename:join([Home, "epm_index"])}]) of
 					{ok, _} ->
 						Rows = dets:match(epm_index, '$1'),
 						dets:close(epm_index),
-						
+
 						[{{User,Name,Vsn}, #package{
 							user = User,
 							name = Name,
@@ -87,7 +112,7 @@ open_dets_table(Home, EpmHome) ->
 		end,
 
     case dets:open_file(epm_index, [{type, set}, {file, File}]) of
-	    {ok, _} -> 
+	    {ok, _} ->
 			%% TODO: delete this later
 			[dets:insert(epm_index, I) || I <- Insert],
 			file:delete(filename:join([Home, "epm_index"])),
@@ -97,7 +122,7 @@ open_dets_table(Home, EpmHome) ->
 	    {error, Reason} ->
 	        ?EXIT("failed to open epm index file (~s): ~p", [File, Reason])
 	end.
-	
+
 eval(Str) ->
     case erl_scan:string(Str) of
         {ok,Tokens,_} ->
@@ -137,7 +162,7 @@ add_to_path(InstallDir) ->
 		_ ->
 		    ok
 	end.
-	    
+
 del_dir(Dir) ->
 	case file:list_dir(Dir) of
 		{ok, Files} ->
@@ -156,14 +181,14 @@ del_dir(Dir) ->
 		_ ->
 			ok
 	end.
-	
+
 rn_dir(OldName, NewName) ->
     case file:rename(OldName, NewName) of
         ok -> ok;
         {error, Reason} ->
             exit(lists:flatten(io_lib:format("failed to rename ~s to ~s: ~p", [OldName, NewName, Reason])))
     end.
-	
+
 do_cmd(Cmd, fail) ->
 	case do_cmd(Cmd) of
 		{0, ""} ->
@@ -173,18 +198,18 @@ do_cmd(Cmd, fail) ->
 		{_, Output} ->
 			exit(Output)
 	end.
-	
+
 do_cmd(Cmd) ->
     Results = string:tokens(os:cmd(Cmd ++ "; echo $?"), "\n"),
     [ExitCode|Other] = lists:reverse(Results),
     {list_to_integer(ExitCode), string:join(lists:reverse(Other), "\n")}.
-    
+
 print_cmd_output(Format, Args) ->
 	case get(verbose) of
 		undefined -> print_cmd_output(Format, Args, false);
 		Verbose -> print_cmd_output(Format, Args, Verbose)
 	end.
-	
+
 print_cmd_output(_, _, false) -> ok; %% do not print verbose output
 print_cmd_output(Format, Args, true) ->
 	Str = lists:flatten(io_lib:format("    " ++ Format, Args)),
@@ -192,12 +217,12 @@ print_cmd_output(Format, Args, true) ->
 	Output = re:replace(Output0, "\~", "", [global, {return, list}]),
 	io:format(string:substr(Output, 1, length(Output)-4), []).
 
-set_cwd_build_home(GlobalConfig) ->	
+set_cwd_build_home(GlobalConfig) ->
 	set_cwd(proplists:get_value(build_dir, GlobalConfig, ".")).
-	
+
 set_cwd(Dir) ->
 	case file:set_cwd(Dir) of
-		ok -> 
+		ok ->
 			ok;
 		{error, _} ->
 			exit(lists:flatten(io_lib:format("failed to change working directory: ~s", [Dir])))
