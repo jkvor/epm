@@ -14,7 +14,9 @@
 	
 	epm config --set build_dir "/tmp"
 	epm config --set install_dir "/Users/jvorreuter/erl_libs"
-	
+	epm config --set proxy_host http://my.corporate.proxy
+	epm config --set proxy_port 80
+	epm config --set net_timeout 60000 # for a slow network...
 	
 ### Read the blog post
 

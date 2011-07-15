@@ -6,8 +6,8 @@
 download_tarball(Repo, Url) ->
 	LocalProjectDir = Repo#repository.owner ++ "-" ++ Repo#repository.name,
 	io:format("+ downloading ~s~n", [Url]),
-    case http:request(get, {Url, [{"User-Agent", "EPM"}]}, [{timeout, 6000}], [{body_format, binary}]) of
-        {ok,{{_,200,_},_,Bin}} ->
+	case epm_util:http_request(Url, undefined, [{response_format, binary}]) of
+        {ok, "200", _, Bin} ->
             case erl_tar:table({binary, Bin}, [compressed]) of
                 {ok,Files} ->
 					TarName = tarname(Files), 
@@ -23,7 +23,7 @@ download_tarball(Repo, Url) ->
                 {error, Reason1} ->
                     ?EXIT("failed to extract ~s tarball: ~p", [Repo#repository.name, Reason1])
             end;
-        {ok, {{_,404,_},_,_}} ->
+        {ok, "404", _, _} ->
             ?EXIT("remote project does not exist: ~s", [Url]);
         Error ->
             io:format("~p~n", [Error]),

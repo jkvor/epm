@@ -527,7 +527,7 @@ update_epm() ->
 		end,
 	Fork = proplists:get_value(epm_fork, application:get_all_env(epm), "JacobVorreuter"),
 	Url = "http://github.com/" ++ Fork ++ "/epm/raw/master/epm",
-	case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+	case epm_util:http_request(Url, [{"Host", "github.com"}], [{body_format, binary}]) of
 		{ok, {{_, 200, _}, _, Body}} ->
 			case file:write_file(File, Body) of
 				ok ->
