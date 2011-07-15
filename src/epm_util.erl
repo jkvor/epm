@@ -8,6 +8,47 @@ home_dir() ->
 		_ -> []
 	end.
 	
+
+set_http_proxy(Host, Port) when is_list(Port) ->
+    set_http_proxy(Host, list_to_integer(Port));
+set_http_proxy(Host, Port) when is_integer(Port) ->
+    httpc:set_options([{proxy, {{Host, Port}, []}}, {verbose, debug}], epm).
+
+set_net_timeout(Timeout) when is_list(Timeout) ->
+    set_net_timeout(list_to_integer(Timeout));
+set_net_timeout(Timeout) when is_integer(Timeout) ->
+    put(net_timeout, Timeout).
+
+request_as_str(Url, Host) ->
+    case http_request(Url, Host) of
+        {ok, {{_, 200, _}, _, Body}} ->
+	        Body;
+	    {ok, {{_, 403, _}, _, _}} ->
+	        not_found;
+        {ok, {{_, 404, _}, _, _}} ->
+	        not_found;
+	    {ok, _} ->
+	        request_failed;
+	    {error, Reason} ->
+	        io:format("timeout? ~p~n", [Reason]),
+	        Reason
+	end.
+
+http_request(Url, Host) ->
+    http_request(Url, Host, [], []).
+
+http_request(Url, Host, HttpOpts, ClientOpts) ->
+    httpc:request(get, {Url, make_headers(Host)}, 
+                  default_http_options() ++ HttpOpts, ClientOpts, epm).
+
+make_headers(undefined) ->
+    [{"User-Agent", "EPM"}];
+make_headers(Host) ->
+    [{"Host", Host}, {"User-Agent", "EPM"}].
+
+default_http_options() -> 
+    [{timeout, get(net_timeout)}].
+
 epm_home_dir(Home) ->
     EPM = filename:join([Home, "epm"]),
     case filelib:is_dir(EPM) of

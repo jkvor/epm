@@ -6,7 +6,7 @@
 download_tarball(Repo, Url) ->
 	LocalProjectDir = Repo#repository.owner ++ "-" ++ Repo#repository.name,
 	io:format("+ downloading ~s~n", [Url]),
-    case http:request(get, {Url, [{"User-Agent", "EPM"}]}, [{timeout, 6000}], [{body_format, binary}]) of
+	case epm_util:http_request(Url, undefined, [], [{body_format, binary}]) of
         {ok,{{_,200,_},_,Bin}} ->
             case erl_tar:table({binary, Bin}, [compressed]) of
                 {ok,Files} ->

@@ -9,6 +9,7 @@ main(Args) ->
     
     inets:start(),
 	lists:map(fun application:start/1, [crypto, public_key, ssl, epm]),
+    inets:start(httpc, [{profile, epm}]),
 
 	case (catch main1(Args)) of
 		{'EXIT', ErrorMsg} when is_list(ErrorMsg) ->
@@ -45,6 +46,8 @@ main1(Args) ->
 		        InstallDir -> epm_util:add_to_path(InstallDir)
 		    end,
 			
+			setup_connectivity(GlobalConfig),
+			
 			epm_core:execute(GlobalConfig, Args);
 		{ok, [], FileLoc} ->
 			put(global_config, FileLoc),
@@ -56,3 +59,13 @@ main1(Args) ->
 		{error, Reason} ->
 			?EXIT("failed to read epm global config: ~p", [Reason])
 	end.
+
+setup_connectivity(GlobalConfig) ->
+    case proplists:get_value(proxy_host, GlobalConfig) of
+        undefined -> ok;
+        Host ->
+            Port = proplists:get_value(proxy_port, GlobalConfig, "8080"),
+            epm_util:set_http_proxy(Host, Port)
+    end,
+    Timeout = proplists:get_value(net_timeout, GlobalConfig, 6000),
+    epm_util:set_net_timeout(Timeout).
