@@ -5,6 +5,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("epm.hrl").
+-define(HOST, "github.com").
 
 package_deps(User, ProjectName, Vsn) ->
     if
@@ -19,14 +20,14 @@ package_deps(User, ProjectName, Vsn) ->
         Vsn == undefined -> ?EXIT("get_package_deps/3 vsn cannot be undefined",[]);
         true -> ok
     end,
-    Url = lists:flatten(io_lib:format("http://github.com/~s/~s/raw/~s/~s.epm", [User, ProjectName, Vsn, ProjectName])),
-    case request_as_str(Url) of
+    Url = lists:flatten(io_lib:format("https://github.com/~s/~s/raw/~s/~s.epm", [User, ProjectName, Vsn, ProjectName])),
+    case epm_util:request_as_str(Url, ?HOST) of
         Body when is_list(Body) -> proplists:get_value(deps, epm_util:eval(Body), []);
         _ -> []
     end.
  
 search(ProjectName) ->
-    case request_as_xml("http://github.com/api/v2/xml/repos/search/" ++ ProjectName) of
+    case request_as_xml("https://github.com/api/v2/xml/repos/search/" ++ ProjectName) of
 		#xmlElement{name=repositories, content=Repos} ->
 			Found = lists:reverse(lists:foldl(
 				fun (#xmlElement{name=repository}=Repo, Acc) ->
@@ -65,7 +66,7 @@ search(ProjectName) ->
 	end.
 	
 info(User, ProjectName) -> 
-	case request_as_xml("http://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName) of
+	case request_as_xml("https://github.com/api/v2/xml/repos/show/" ++ User ++ "/" ++ ProjectName) of
 		#xmlElement{name=repository}=Repo ->
 			case xmerl_xpath:string("/repository/name/text()", Repo) of
 				[#xmlText{value=Name}] ->					
@@ -86,8 +87,8 @@ info(User, ProjectName) ->
 	end.
 
 tags(User, ProjectName) ->
-    Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags",
-    case request_as_str(Url) of
+    Url = "https://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/tags",
+    case epm_util:request_as_str(Url, ?HOST) of
         "--- \ntags: {}\n\n" -> [];
         "--- \ntags: \n" ++ Body -> 
             [begin
@@ -98,8 +99,8 @@ tags(User, ProjectName) ->
     end.
 
 branches(User, ProjectName) ->
-    Url = "http://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches",
-    case request_as_str(Url) of
+    Url = "https://github.com/api/v2/yaml/repos/show/" ++ User ++ "/" ++ ProjectName ++ "/branches",
+    case epm_util:request_as_str(Url, ?HOST) of
         "--- \nbranches: {}\n\n" -> [];
         "--- \nbranches: \n" ++ Body -> 
             [begin
@@ -110,7 +111,7 @@ branches(User, ProjectName) ->
 	end.
 
 download_package(Repo, Vsn) ->
-    Url = lists:flatten(io_lib:format("http://github.com/~s/~s/tarball/~s", [Repo#repository.owner, Repo#repository.name, Vsn])),
+    Url = lists:flatten(io_lib:format("https://github.com/~s/~s/tarball/~s", [Repo#repository.owner, Repo#repository.name, Vsn])),
 	epm_package:download_tarball(Repo, Url).
 			
 default_vsn() -> "master".
@@ -122,7 +123,7 @@ repo_xml_field(FieldName, Repo) ->
 	end.
 		
 request_as_xml(Url) ->
-    case request_as_str(Url) of
+    case epm_util:request_as_str(Url, ?HOST) of
         Body when is_list(Body) ->
             case xmerl_scan:string(Body) of
                 {XmlElement, _} ->
@@ -133,18 +134,3 @@ request_as_xml(Url) ->
         Err ->
             Err
     end.
-    
-request_as_str(Url) ->
-    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
-        {ok, {{_, 200, _}, _, Body}} ->
-	        Body;
-	    {ok, {{_, 403, _}, _, _}} ->
-	        not_found;
-        {ok, {{_, 404, _}, _, _}} ->
-	        not_found;
-	    {ok, _} ->
-	        request_failed;
-	    {error, Reason} ->
-	        io:format("timeout? ~p~n", [Reason]),
-	        Reason
-	end.

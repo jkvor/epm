@@ -48,7 +48,7 @@ package_deps(User, ProjectName, Vsn) ->
         true -> ok
     end,
     Url = lists:flatten(io_lib:format("http://bitbucket.org/~s/~s/raw/~s/~s.epm", [User, ProjectName, Vsn, ProjectName])),
-    case request_as_str(Url) of
+    case epm_util:request_as_str(Url, "bitbucket.org") of
         Body when is_list(Body) -> proplists:get_value(deps, epm_util:eval(Body), []);
         _ -> []
     end.
@@ -106,7 +106,7 @@ download_package(Repo, Vsn) ->
 default_vsn() -> "tip".
 
 request_as_xml(Url) ->
-    case request_as_str(Url) of
+    case epm_util:request_as_str(Url, "bitbucket.org") of
         Body when is_list(Body) ->
             case yaws_html:h2e(Body) of
 				{ehtml,[],[_,Xml]} -> Xml;
@@ -116,21 +116,6 @@ request_as_xml(Url) ->
             Err
     end.
     
-request_as_str(Url) ->
-    case http:request(get, {Url, [{"User-Agent", "EPM"}, {"Host", "github.com"}]}, [{timeout, 6000}], []) of
-        {ok, {{_, 200, _}, _, Body}} ->
-	        Body;
-	    {ok, {{_, 403, _}, _, _}} ->
-	        not_found;
-        {ok, {{_, 404, _}, _, _}} ->
-	        not_found;
-	    {ok, _} ->
-	        request_failed;
-	    {error, Reason} ->
-	        io:format("timeout? ~p~n", [Reason]),
-	        Reason
-	end.
-	
 %% fake xpaths
 
 search_xml_for_repos({'div',[{class,"repos-all"}|_],Repos}) -> 

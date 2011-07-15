@@ -11,5 +11,10 @@
               yaws_html
   ]},
   {registered, []},
-  {applications, [kernel, stdlib, sasl]}
+  {applications, [kernel, stdlib]},
+  {env, [
+    {sasl, [
+      {sasl_error_logger, false}
+    ]}
+  ]}
 ]}.
