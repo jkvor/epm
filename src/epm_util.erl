@@ -8,7 +8,8 @@ home_dir() ->
 		_ -> []
 	end.
 
-
+set_http_proxy(Host, Port) when Host =:= none orelse Port =:= none ->
+    ignored;
 set_http_proxy(Host, Port) when is_list(Port) ->
     set_http_proxy(Host, list_to_integer(Port));
 set_http_proxy(Host, Port) when is_integer(Port) ->
@@ -57,7 +58,7 @@ http_options(ClientOpts) ->
 
 proxy_options() ->
     case get(proxy_host) of
-        none -> [];
+        undefined -> [];
         Host ->
             Port = case get(proxy_port) of
                 none -> 8080;
